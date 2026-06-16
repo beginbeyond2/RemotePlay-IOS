@@ -1,0 +1,15 @@
+/* Localizable strings (English) - corresponds to Android values/strings.xml */
+
+"app_name" = "Oscilloscope";
+"connection" = "Connection";
+"disconnect" = "Disconnect";
+"connectionSuccess" = "Connection Success";
+"connectionFailed" = "Connection Break";
+"enterIP" = "Enter IP";
+"run" = "RUN/STOP";
+"single" = "SEQ";
+"auto" = "AUTO";
+"half" = "50%";
+"home" = "Home";
+"menu" = "Menu";
+"up" = "Up";

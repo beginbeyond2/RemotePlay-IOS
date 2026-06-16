@@ -1,0 +1,72 @@
+# XcodeGen project.yml
+# 一键生成 RemotePlay.xcodeproj：
+#   brew install xcodegen
+#   cd RemotePlay-iOS
+#   xcodegen generate
+#
+# 平台要求：iOS 16.0+ / iOS 17.0+
+
+name: RemotePlay
+options:
+  bundleIdPrefix: com.micsig.tbook
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
+  defaultConfig: Debug
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1,2"  # iPhone + iPad
+    ENABLE_BITCODE: NO
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "Apple Development"
+    MARKETING_VERSION: "2.0.2"
+    CURRENT_PROJECT_VERSION: "3"
+    PRODUCT_NAME: "RemotePlay"
+
+targets:
+  RemotePlay:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: RemotePlay
+        excludes:
+          - "Resources/Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.micsig.tbook.remoteplay
+        INFOPLIST_FILE: RemotePlay/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: YES
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    info:
+      path: RemotePlay/Resources/Info.plist
+      properties:
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
+        NSLocalNetworkUsageDescription: "RemotePlay connects to the oscilloscope on your local network (TCP 8888) to stream live measurement and receive touch / button commands."
+        CFBundleShortVersionString: "2.0.2"
+        CFBundleVersion: "3"
+        CFBundleDisplayName: "RemotePlay"
+        LSRequiresIPhoneOS: true
+    dependencies:
+      - sdk: Network.framework
+      - sdk: AVFoundation.framework
+      - sdk: VideoToolbox.framework
+      - sdk: CoreMedia.framework
+      - sdk: CoreVideo.framework
+      - sdk: UIKit.framework

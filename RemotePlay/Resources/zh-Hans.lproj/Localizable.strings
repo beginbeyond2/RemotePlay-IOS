@@ -1,0 +1,15 @@
+/* Localizable strings (Simplified Chinese) - corresponds to Android values-zh/strings.xml */
+
+"app_name" = "示波器";
+"connection" = "连接";
+"disconnect" = "断开";
+"connectionSuccess" = "连接成功";
+"connectionFailed" = "连接断开";
+"enterIP" = "请输入IP";
+"run" = "运行/停止";
+"single" = "单次";
+"auto" = "自动";
+"half" = "50%";
+"home" = "主页";
+"menu" = "菜单";
+"up" = "上";
