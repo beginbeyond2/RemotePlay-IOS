@@ -104,18 +104,26 @@ jobs:
       - name: Package .ipa with macOS zip (preserves unix permissions)
         run: |
           set -e
+          # 用 GITHUB_WORKSPACE 拿仓库根绝对路径
+          cd "$GITHUB_WORKSPACE"
           APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found"
+            echo "ERROR: RemotePlay.app not found under build/"
+            find build -name "*.app" -type d | head -20
             exit 1
           fi
-          PARENT=$(dirname "$APP_DIR")
-          cd "$PARENT"
+          echo "App found: $APP_DIR"
+
+          # 切到 .app 父目录
+          APP_PARENT=$(dirname "$APP_DIR")
+          cd "$APP_PARENT"
+          echo "In directory: $(pwd)"
+          ls -la
 
           # 确保主二进制有可执行权限
-          chmod +x RemotePlay.app/RemotePlay 2>/dev/null || true
-          # 给所有嵌套 framework 可执行权限
-          find RemotePlay.app -type f -perm -u+x -exec chmod +x {} \; 2>/dev/null || true
+          chmod +x RemotePlay.app/RemotePlay
+          # 给所有可执行文件加可执行权限（framework、dylib）
+          find RemotePlay.app -type f -perm -u+x -exec chmod +x {} \;
 
           # 创建 IPA 标准结构
           rm -rf Payload
@@ -125,22 +133,22 @@ jobs:
           # 用 macOS 自带的 zip（不是 PowerShell 的 Compress-Archive）
           # -y 保留 unix 文件信息（symlink）
           # 不带压缩最大化兼容性
-          zip -r -y ../RemotePlay.ipa Payload/ > /dev/null
-
-          # 回到 build 目录
-          cd ..
-          cd "$PARENT/.." || cd ..
-
-          # 上传后清理 Payload 临时目录（不影响 .app）
-          rm -rf "$PARENT/Payload"
+          zip -r -y RemotePlay.ipa Payload/ > /dev/null
 
           # 验证
+          echo ""
           echo "--- IPA file ---"
           ls -la RemotePlay.ipa
-          echo "--- IPA 内部结构 ---"
+          echo ""
+          echo "--- IPA 内部结构 (前 30 行) ---"
           unzip -l RemotePlay.ipa | head -30
-          echo "--- IPA 中 RemotePlay 二进制权限 ---"
-          unzip -p RemotePlay.ipa Payload/RemotePlay.app/RemotePlay | head -c 4 | xxd
+          echo ""
+          echo "--- IPA 中 RemotePlay 主二进制权限 ---"
+          # 用 unzip -Z 查权限
+          unzip -Z RemotePlay.ipa Payload/RemotePlay.app/RemotePlay 2>&1 | head -5
+          echo ""
+          echo "--- IPA 路径 ---"
+          pwd
 
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
