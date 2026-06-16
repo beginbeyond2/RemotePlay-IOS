@@ -75,25 +75,26 @@ final class RemoteClient {
             return
         }
 
-        let conn = NWConnection(
-            host: NWEndpoint.Host(host),
-            port: nwPort,
-            using: .tcp
-        )
-        self.connection = conn
-
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.connectionTimeout = 5
         tcpOptions.enableKeepalive = true
         tcpOptions.keepaliveIdle = 30
         tcpOptions.noDelay = true
-        // 8MB 接收缓冲，对应 Android 端 setReceiveBufferSize(8 * 1024 * 1024)
-        tcpOptions.receiveBufferSize = 8 * 1024 * 1024
+        // 8MB 接收缓冲，对应 Android 端 setReceiveBufferSize(8 * 1024 * 1024)。
+        // 注：NWProtocolTCP.Options 在 iOS Network framework 中不暴露
+        // receiveBufferSize，操作系统默认缓冲足够处理 H.264 帧。
         tcpOptions.maximumSegmentSize = 1400
 
         let parameters = NWParameters(tls: nil, tcp: tcpOptions)
         parameters.serviceClass = .responsiveData
-        conn.parameters = parameters
+
+        // NWConnection.parameters 是只读，必须在构造时传入 using: 参数。
+        let conn = NWConnection(
+            host: NWEndpoint.Host(host),
+            port: nwPort,
+            using: parameters
+        )
+        self.connection = conn
 
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }

@@ -114,11 +114,11 @@ struct RemoteButton: View {
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(pressed
-                          ? Color(red: 0.27, green: 0.62, blue: 0.94)
-                          : LinearGradient(
+                          ? AnyShapeStyle(Color(red: 0.27, green: 0.62, blue: 0.94))
+                          : AnyShapeStyle(LinearGradient(
                                 colors: [Color(red: 0.27, green: 0.62, blue: 0.94),
                                          Color(red: 0.18, green: 0.40, blue: 0.60)],
-                                startPoint: .top, endPoint: .bottom))
+                                startPoint: .top, endPoint: .bottom)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(Color(red: 0.18, green: 0.40, blue: 0.60), lineWidth: 1)
@@ -155,11 +155,11 @@ struct RemoteIconButton: View {
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(pressed
-                          ? Color(red: 0.27, green: 0.62, blue: 0.94)
-                          : LinearGradient(
+                          ? AnyShapeStyle(Color(red: 0.27, green: 0.62, blue: 0.94))
+                          : AnyShapeStyle(LinearGradient(
                                 colors: [Color(red: 0.27, green: 0.62, blue: 0.94),
                                          Color(red: 0.18, green: 0.40, blue: 0.60)],
-                                startPoint: .top, endPoint: .bottom))
+                                startPoint: .top, endPoint: .bottom)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(Color(red: 0.18, green: 0.40, blue: 0.60), lineWidth: 1)
