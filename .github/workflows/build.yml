@@ -24,16 +24,12 @@ jobs:
           echo "---"
           ls -d /Applications/Xcode_*.app 2>/dev/null || echo "No Xcode_*.app found"
           echo "---"
-          ls -d /Applications/Xcode.app 2>/dev/null || echo "No /Applications/Xcode.app"
-          echo "---"
-          xcodebuild -version
-          echo "---"
-          xcodebuild -showsdks 2>&1 | head -20
+          xcodebuild -version 2>/dev/null || true
 
-      - name: Select Xcode 15
+      - name: Select Xcode 15.0 (most broadly available on macos-14)
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.4'
+          xcode-version: '15.0'
 
       - name: Verify Xcode
         run: |
@@ -47,20 +43,30 @@ jobs:
       - name: Generate .xcodeproj
         run: xcodegen generate
 
-      - name: Show project & scheme
+      # 关键修复：xcodegen 默认输出 objectVersion=77（Xcode 15.4 格式），
+      # 但 Runner 上的 Xcode 15.0~15.2 只支持 70。手动降级。
+      - name: Downgrade project.pbxproj objectVersion to 70 (Xcode 15.0+)
         run: |
-          ls -la *.xcodeproj 2>/dev/null
-          xcodebuild -project RemotePlay.xcodeproj -list 2>&1 || true
+          PBXPROJ="RemotePlay.xcodeproj/project.pbxproj"
+          if [ ! -f "$PBXPROJ" ]; then
+            echo "ERROR: $PBXPROJ not found"
+            exit 1
+          fi
+          echo "--- Before ---"
+          grep "objectVersion" "$PBXPROJ" || echo "(no objectVersion found)"
+          # 77 -> 70 (Xcode 15.0+ 兼容)
+          sed -i.bak 's/objectVersion = 77;/objectVersion = 70;/g' "$PBXPROJ"
+          rm -f "${PBXPROJ}.bak"
+          echo "--- After ---"
+          grep "objectVersion" "$PBXPROJ" || echo "(no objectVersion found)"
+
+      - name: Verify project can be read
+        run: |
+          xcodebuild -project RemotePlay.xcodeproj -list 2>&1
 
       - name: Build for iOS device (unsigned)
         run: |
           set -e -o pipefail
-          # 使用 generic/platform=iOS Simulator 会失败（那是模拟器）
-          # 使用 generic/platform=iOS 编译 iOS 设备端，禁用签名
-          xcodebuild \
-            -project RemotePlay.xcodeproj \
-            -list 2>&1 | head -30
-          echo "================================"
           xcodebuild \
             -project RemotePlay.xcodeproj \
             -scheme RemotePlay \
@@ -132,16 +138,23 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15
+      - name: Select Xcode 15.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.4'
+          xcode-version: '15.0'
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Generate .xcodeproj
         run: xcodegen generate
+
+      - name: Downgrade project.pbxproj objectVersion to 70
+        run: |
+          PBXPROJ="RemotePlay.xcodeproj/project.pbxproj"
+          sed -i.bak 's/objectVersion = 77;/objectVersion = 70;/g' "$PBXPROJ"
+          rm -f "${PBXPROJ}.bak"
+          grep "objectVersion" "$PBXPROJ" || true
 
       - name: Build for simulator
         run: |
