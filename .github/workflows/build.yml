@@ -18,14 +18,28 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15.4 (iOS 17 SDK)
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
-
-      - name: Show toolchain
+      - name: Show runner info
         run: |
           sw_vers
+          echo "---"
+          ls -d /Applications/Xcode_*.app 2>/dev/null || echo "No Xcode_*.app found"
+          echo "---"
+          ls -d /Applications/Xcode.app 2>/dev/null || echo "No /Applications/Xcode.app"
+          echo "---"
           xcodebuild -version
-          swift --version
+          echo "---"
+          xcodebuild -showsdks 2>&1 | head -20
+
+      - name: Select Xcode 15
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Verify Xcode
+        run: |
+          xcodebuild -version
+          xcrun --show-sdk-path --sdk iphonesimulator
+          xcrun --show-sdk-path --sdk iphoneos
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -33,39 +47,66 @@ jobs:
       - name: Generate .xcodeproj
         run: xcodegen generate
 
+      - name: Show project & scheme
+        run: |
+          ls -la *.xcodeproj 2>/dev/null
+          xcodebuild -project RemotePlay.xcodeproj -list 2>&1 || true
+
       - name: Build for iOS device (unsigned)
         run: |
+          set -e -o pipefail
+          # 使用 generic/platform=iOS Simulator 会失败（那是模拟器）
+          # 使用 generic/platform=iOS 编译 iOS 设备端，禁用签名
+          xcodebuild \
+            -project RemotePlay.xcodeproj \
+            -list 2>&1 | head -30
+          echo "================================"
           xcodebuild \
             -project RemotePlay.xcodeproj \
             -scheme RemotePlay \
             -configuration Release \
+            -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            CODE_SIGN_ENTITLEMENTS="" \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            build 2>&1 | tail -120
+          echo "================================"
+          echo "xcodebuild exit: $?"
 
       - name: List build output
         run: |
-          echo "--- Build products ---"
-          find build/Build/Products -maxdepth 4 -type d -name "*.app" 2>/dev/null
-          echo "--- Info.plist key values ---"
-          PLIST=$(find build/Build/Products -name "Info.plist" -path "*Release-iphoneos*" | head -n 1)
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST" || true
+          echo "--- Looking for built .app ---"
+          find build -name "*.app" -type d 2>/dev/null
+          echo "---"
+          APP_PATH=$(find build -name "RemotePlay.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: RemotePlay.app not found, build may have failed"
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          ls -la "$APP_PATH"
+          PLIST="$APP_PATH/Info.plist"
+          echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo MISSING)"
+          echo "CFBundleVersion: $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null || echo MISSING)"
+          echo "MinimumOSVersion: $(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST" 2>/dev/null || echo MISSING)"
 
       - name: Package .app as zip
         run: |
-          APP_PATH=$(find build/Build/Products -maxdepth 4 -type d -name "RemotePlay.app" | head -n 1)
-          if [ -z "$APP_PATH" ]; then
+          APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
             echo "ERROR: RemotePlay.app not found"
             exit 1
           fi
-          echo "App path: $APP_PATH"
-          cd "$(dirname "$APP_PATH")"
-          zip -r RemotePlay-unsigned.zip RemotePlay.app
+          PARENT=$(dirname "$APP_DIR")
+          APP_NAME=$(basename "$APP_DIR")
+          cd "$PARENT"
+          zip -r RemotePlay-unsigned.zip "$APP_NAME"
 
       - name: Upload .app artifact
         uses: actions/upload-artifact@v4
@@ -91,8 +132,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: Select Xcode 15
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -102,6 +145,7 @@ jobs:
 
       - name: Build for simulator
         run: |
+          set -e -o pipefail
           xcodebuild \
             -project RemotePlay.xcodeproj \
             -scheme RemotePlay \
@@ -109,12 +153,14 @@ jobs:
             -destination "${{ matrix.destination }}" \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            build 2>&1 | tail -80
 
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-build-log-${{ matrix.destination }}
+          name: simulator-build-log
           path: build/Logs/Build/*.log
           retention-days: 3
