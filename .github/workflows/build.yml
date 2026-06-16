@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-ios:
-    name: Build .app for iOS 16 / iOS 17
+    name: Build .app + .ipa for iOS 16 / iOS 17
     runs-on: macos-14
     timeout-minutes: 30
 
@@ -26,7 +26,7 @@ jobs:
           echo "---"
           xcodebuild -version 2>/dev/null || true
 
-      - name: Select Xcode 15.0 (most broadly available on macos-14)
+      - name: Select Xcode 15.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '15.0'
@@ -43,8 +43,6 @@ jobs:
       - name: Generate .xcodeproj
         run: xcodegen generate
 
-      # 关键修复：xcodegen 默认输出 objectVersion=77（Xcode 15.4 格式），
-      # 但 Runner 上的 Xcode 15.0~15.2 只支持 70。手动降级。
       - name: Downgrade project.pbxproj objectVersion to 70 (Xcode 15.0+)
         run: |
           PBXPROJ="RemotePlay.xcodeproj/project.pbxproj"
@@ -54,7 +52,6 @@ jobs:
           fi
           echo "--- Before ---"
           grep "objectVersion" "$PBXPROJ" || echo "(no objectVersion found)"
-          # 77 -> 70 (Xcode 15.0+ 兼容)
           sed -i.bak 's/objectVersion = 77;/objectVersion = 70;/g' "$PBXPROJ"
           rm -f "${PBXPROJ}.bak"
           echo "--- After ---"
@@ -85,40 +82,71 @@ jobs:
           echo "================================"
           echo "xcodebuild exit: $?"
 
-      - name: List build output
+      - name: Verify built .app exists
         run: |
-          echo "--- Looking for built .app ---"
-          find build -name "*.app" -type d 2>/dev/null
-          echo "---"
           APP_PATH=$(find build -name "RemotePlay.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: RemotePlay.app not found, build may have failed"
+            echo "ERROR: RemotePlay.app not found"
             exit 1
           fi
           echo "Found app at: $APP_PATH"
           ls -la "$APP_PATH"
+          # Show bundle binary permissions (关键！macOS zip 会保留这些)
+          ls -la "$APP_PATH/RemotePlay"
+          file "$APP_PATH/RemotePlay"
           PLIST="$APP_PATH/Info.plist"
           echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo MISSING)"
           echo "CFBundleVersion: $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null || echo MISSING)"
           echo "MinimumOSVersion: $(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST" 2>/dev/null || echo MISSING)"
 
-      - name: Package .app as zip
+      # 关键修复：直接用 macOS 自带 zip 打 IPA
+      # 不用 PowerShell / Windows Compress-Archive（它不写 unix file permissions）
+      - name: Package .ipa with macOS zip (preserves unix permissions)
         run: |
+          set -e
           APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
           if [ -z "$APP_DIR" ]; then
             echo "ERROR: RemotePlay.app not found"
             exit 1
           fi
           PARENT=$(dirname "$APP_DIR")
-          APP_NAME=$(basename "$APP_DIR")
           cd "$PARENT"
-          zip -r RemotePlay-unsigned.zip "$APP_NAME"
 
-      - name: Upload .app artifact
+          # 确保主二进制有可执行权限
+          chmod +x RemotePlay.app/RemotePlay 2>/dev/null || true
+          # 给所有嵌套 framework 可执行权限
+          find RemotePlay.app -type f -perm -u+x -exec chmod +x {} \; 2>/dev/null || true
+
+          # 创建 IPA 标准结构
+          rm -rf Payload
+          mkdir Payload
+          mv RemotePlay.app Payload/
+
+          # 用 macOS 自带的 zip（不是 PowerShell 的 Compress-Archive）
+          # -y 保留 unix 文件信息（symlink）
+          # 不带压缩最大化兼容性
+          zip -r -y ../RemotePlay.ipa Payload/ > /dev/null
+
+          # 回到 build 目录
+          cd ..
+          cd "$PARENT/.." || cd ..
+
+          # 上传后清理 Payload 临时目录（不影响 .app）
+          rm -rf "$PARENT/Payload"
+
+          # 验证
+          echo "--- IPA file ---"
+          ls -la RemotePlay.ipa
+          echo "--- IPA 内部结构 ---"
+          unzip -l RemotePlay.ipa | head -30
+          echo "--- IPA 中 RemotePlay 二进制权限 ---"
+          unzip -p RemotePlay.ipa Payload/RemotePlay.app/RemotePlay | head -c 4 | xxd
+
+      - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RemotePlay-unsigned
-          path: build/Build/Products/Release-iphoneos/RemotePlay-unsigned.zip
+          name: RemotePlay-ipa
+          path: build/Build/Products/Release-iphoneos/RemotePlay.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -154,7 +182,6 @@ jobs:
           PBXPROJ="RemotePlay.xcodeproj/project.pbxproj"
           sed -i.bak 's/objectVersion = 77;/objectVersion = 70;/g' "$PBXPROJ"
           rm -f "${PBXPROJ}.bak"
-          grep "objectVersion" "$PBXPROJ" || true
 
       - name: Build for simulator
         run: |
