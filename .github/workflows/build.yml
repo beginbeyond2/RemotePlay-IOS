@@ -87,19 +87,19 @@ jobs:
       # Xcode 16 默认 objectVersion 77（Xcode 16 兼容）
       # 不需要降级到 70，因为 macos-15 Runner 自带 Xcode 16.0+
 
-      - name: Build for iOS device (unsigned by xcodebuild)
+      - name: Archive for iOS device (replaces build mode)
         run: |
           set -e -o pipefail
-          # 步骤 1：xcodebuild 不签名编译
-          # iOS 17/18 SDK 在 build 模式不允许 ad-hoc 签名
-          # 签名留给后面的 codesign --sign - 手动做
-          xcodebuild \
+          # 用 archive 模式替代 build 模式
+          # 原因：Xcode 16.0 的 actool 在 build 模式下会偷偷 fallback 到 iphonesimulator SDK
+          # 而 macos-15 Runner 找不到匹配的 simulator runtime
+          # archive 模式不触发这个 bug
+          xcodebuild archive \
             -project RemotePlay.xcodeproj \
             -scheme RemotePlay \
             -configuration Release \
             -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
+            -archivePath build/RemotePlay.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -107,17 +107,31 @@ jobs:
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
             -skipPackagePluginValidation \
             -skipMacroValidation \
-            build 2>&1 | tail -120
+            2>&1 | tail -120
           echo "================================"
-          echo "xcodebuild exit: $?"
+          echo "xcodebuild archive exit: $?"
+
+      - name: Locate archived .app
+        run: |
+          set -e
+          # archive 模式下 .app 位于 .xcarchive/Products/Applications/
+          APP_DIR=$(find build/RemotePlay.xcarchive -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: RemotePlay.app not found in xcarchive"
+            find build/RemotePlay.xcarchive -name "*.app" -type d 2>/dev/null
+            exit 1
+          fi
+          echo "Found app at: $APP_DIR"
+          ls -la "$APP_DIR"
 
       - name: Apply ad-hoc code signature with codesign
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
+          # 从 .xcarchive 找 .app（archive 模式输出位置）
+          APP_DIR=$(find build/RemotePlay.xcarchive -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found"
+            echo "ERROR: RemotePlay.app not found in xcarchive"
             exit 1
           fi
           APP_PARENT=$(dirname "$APP_DIR")
@@ -173,10 +187,10 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
+          # 从 .xcarchive 找签名后的 .app
+          APP_DIR=$(find build/RemotePlay.xcarchive -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found under build/"
-            find build -name "*.app" -type d | head -20
+            echo "ERROR: RemotePlay.app not found in xcarchive"
             exit 1
           fi
           echo "App found: $APP_DIR"
@@ -220,7 +234,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RemotePlay-ipa
-          path: build/Build/Products/Release-iphoneos/RemotePlay.ipa
+          path: build/RemotePlay.xcarchive/Products/Applications/Payload/RemotePlay.ipa
           if-no-files-found: error
           retention-days: 14
 
