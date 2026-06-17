@@ -130,41 +130,7 @@ jobs:
           echo "Found app at: $APP_DIR"
           ls -la "$APP_DIR"
 
-      - name: Apply ad-hoc code signature with codesign
-        run: |
-          set -e
-          cd "$GITHUB_WORKSPACE"
-          # 从 build 目录找 .app
-          APP_DIR=$(find build -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
-          if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found"
-            exit 1
-          fi
-          APP_PARENT=$(dirname "$APP_DIR")
-          cd "$APP_PARENT"
-          echo "In directory: $(pwd)"
-          echo "App: $APP_DIR"
-          echo ""
-          echo "--- Before codesign ---"
-          ls -la RemotePlay.app/_CodeSignature/ 2>&1 || echo "(_CodeSignature/ does not exist - need to sign)"
-
-          # 关键：用 macOS 自带 codesign 手动 ad-hoc 签名
-          # -f 强制覆盖
-          # -s - identity 为 "-" 表示 ad-hoc
-          # --deep 递归签所有 framework / dylib
-          codesign --force --sign - --deep RemotePlay.app
-
-          echo ""
-          echo "--- After codesign ---"
-          ls -la RemotePlay.app/_CodeSignature/
-          echo ""
-          echo "--- codesign verify ---"
-          codesign -dv RemotePlay.app 2>&1
-          echo ""
-          echo "--- File permission check ---"
-          ls -la RemotePlay.app/RemotePlay
-
-      - name: Verify built .app exists + signed
+      - name: Verify built .app exists
         run: |
           APP_PATH=$(find build -name "RemotePlay.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -173,9 +139,6 @@ jobs:
           fi
           echo "Found app at: $APP_PATH"
           ls -la "$APP_PATH"
-          echo ""
-          echo "--- _CodeSignature/ contents ---"
-          ls -la "$APP_PATH/_CodeSignature/" 2>&1
           echo ""
           echo "--- Bundle binary ---"
           ls -la "$APP_PATH/RemotePlay"
@@ -186,6 +149,12 @@ jobs:
           echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo MISSING)"
           echo "CFBundleVersion: $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null || echo MISSING)"
           echo "MinimumOSVersion: $(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST" 2>/dev/null || echo MISSING)"
+
+      # v2.2.2: 移除 CI 端 ad-hoc 签名
+      # 原因：CI 端 codesign --sign - 的 ad-hoc 签名会干扰 3uTools 的 Apple ID 二次签名
+      # 导致 3uTools 报 "1 'apps' installation failed!"
+      # 修复：让 CI 端只产未签名的 .app，由 3uTools 全权签名
+      # 等价于 v2.0.6 成功的配置（Xcode 15.0 + build + CODE_SIGNING_ALLOWED=NO）
 
       # 关键：直接用 macOS 自带 zip 打 IPA
       # 不用 PowerShell / Windows Compress-Archive（它不写 unix file permissions）
