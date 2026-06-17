@@ -242,6 +242,30 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # 同时把 .ipa 上传到 GitHub Release 页面（无 zip 包装）
+      # 用户可以直接下载 .ipa 文件，不用解压
+      - name: Upload .ipa to GitHub Release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Build/Products/Release-iphoneos/RemotePlay.ipa
+          tag_name: ios-latest
+          name: iOS Build ${{ github.sha }}
+          body: |
+            Direct .ipa download (no zip wrapper).
+
+            Install with Sideloadly / 3uTools / AltStore:
+            1. Download `RemotePlay.ipa` below
+            2. Connect iPhone via USB
+            3. In 3uTools: 工具箱 → IPA 签名 → select this file → Apple ID 签名
+            4. 应用 → 安装 → select signed file
+            5. iPhone: 设置 → 通用 → VPN 与设备管理 → 信任证书
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-simulator:
     name: Build for iOS Simulator (smoke test)
     runs-on: macos-14
