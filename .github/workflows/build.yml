@@ -45,6 +45,38 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      # 关键修复：iOS 18 SDK 强制要求 AppIcon 实际 PNG 存在
+      # 否则 actool 报 CompileAssetCatalog 错误
+      # 用 Python 标准库生成 1024x1024 纯色 PNG（无外部依赖）
+      - name: Generate AppIcon-1024.png
+        run: |
+          python3 << 'PYEOF'
+          import struct, zlib, os
+          W = H = 1024
+          # 蓝色：#469fef (Micsig 主色调)
+          R, G, B = 70, 159, 239
+          # 用 zlib level 9 最大化压缩
+          raw = b''
+          for y in range(H):
+              raw += b'\x00' + bytes([R, G, B] * W)
+          comp = zlib.compress(raw, 9)
+
+          def chunk(t, d):
+              return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+
+          png = (b'\x89PNG\r\n\x1a\n' +
+                 chunk(b'IHDR', struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)) +
+                 chunk(b'IDAT', comp) +
+                 chunk(b'IEND', b''))
+
+          out = 'RemotePlay/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png'
+          os.makedirs(os.path.dirname(out), exist_ok=True)
+          with open(out, 'wb') as f:
+              f.write(png)
+          print(f"Generated {out} ({len(png)} bytes)")
+          PYEOF
+          ls -la "RemotePlay/Resources/Assets.xcassets/AppIcon.appiconset/"
+
       - name: Generate .xcodeproj
         run: xcodegen generate
 
