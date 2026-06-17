@@ -212,21 +212,24 @@ jobs:
           mkdir Payload
           mv RemotePlay.app Payload/
 
-          # 用 macOS 自带的 zip（不是 PowerShell 的 Compress-Archive）
-          # -y 保留 unix 文件信息（symlink）
-          # 不带压缩最大化兼容性
-          zip -r -y RemotePlay.ipa Payload/ > /dev/null
+          # 用 Apple 官方 ditto 工具打 IPA
+          # 原因：macOS 内置 zip 命令写出的 .ipa 不是 100% 兼容 PKZIP 格式
+          # 3uTools / AltStore / Sideloadly 可能拒绝（"incorrect file format"）
+          # ditto 是 Apple Xcode 用的同一工具，输出 100% 兼容 IPA 标准
+          # --sequesterRsrc: 把 macOS 资源分支分离到 __MACOSX/ 目录
+          # --keepParent: 保留 Payload/ 父目录结构
+          ditto -c -k --sequesterRsrc --keepParent Payload RemotePlay.ipa
 
           # 验证
           echo ""
           echo "--- IPA file ---"
           ls -la RemotePlay.ipa
           echo ""
+          echo "--- IPA magic bytes (前 4 字节) ---"
+          head -c 4 RemotePlay.ipa | xxd
+          echo ""
           echo "--- IPA 内部结构 (前 30 行) ---"
           unzip -l RemotePlay.ipa | head -30
-          echo ""
-          echo "--- IPA 中 RemotePlay 主二进制权限 ---"
-          unzip -Z RemotePlay.ipa Payload/RemotePlay.app/RemotePlay 2>&1 | head -5
           echo ""
           echo "--- IPA 路径 ---"
           pwd
