@@ -240,6 +240,60 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # 自动更新 README 的 build 信息（仅 main 分支 + build-ios 成功后）
+  update-readme:
+    name: Update README build info
+    needs: build-ios
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          # 必须 fetch 历史才能 commit 回 main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract current version from CHANGELOG
+        id: version
+        run: |
+          # 从 CHANGELOG.md 读第一行 ## v2.x.x 格式
+          VERSION=$(grep -m1 '^## v' CHANGELOG.md | sed 's/^## v//' | sed 's/ .*//' | sed 's/-.*//')
+          if [ -z "$VERSION" ]; then
+            # 回退：从 git tag 读
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="0.0.0"
+          fi
+          echo "VERSION=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: v${VERSION}"
+
+      - name: Run update_readme.sh
+        run: |
+          chmod +x scripts/update_readme.sh
+          ./scripts/update_readme.sh \
+            "${{ steps.version.outputs.VERSION }}" \
+            "$(git rev-parse --short HEAD)" \
+            "passing"
+
+      - name: Show README diff
+        run: |
+          echo "=== README.md changes ==="
+          git diff --stat README.md
+          echo "=== Full diff ==="
+          git diff README.md
+
+      - name: Auto-commit README update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: auto-update README [skip ci]"
+          file_pattern: README.md
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
   build-simulator:
     name: Build for iOS Simulator (smoke test)
     runs-on: macos-14
