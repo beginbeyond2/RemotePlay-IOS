@@ -10,8 +10,8 @@ on:
 
 jobs:
   build-ios:
-    name: Build .app + .ipa (Xcode 16, ad-hoc signed)
-    runs-on: macos-15
+    name: Build .app + .ipa (Xcode 15.0, ad-hoc signed)
+    runs-on: macos-14
     timeout-minutes: 30
 
     steps:
@@ -26,10 +26,10 @@ jobs:
           echo "---"
           xcodebuild -version 2>/dev/null || true
 
-      - name: Select Xcode 16.0
+      - name: Select Xcode 15.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.0'
+          xcode-version: '15.0'
 
       - name: Verify Xcode + SDK
         run: |
@@ -87,19 +87,21 @@ jobs:
       # Xcode 16 默认 objectVersion 77（Xcode 16 兼容）
       # 不需要降级到 70，因为 macos-15 Runner 自带 Xcode 16.0+
 
-      - name: Archive for iOS device (replaces build mode)
+      - name: Build for iOS device (unsigned, Xcode 15.0)
         run: |
           set -e -o pipefail
-          # 用 archive 模式替代 build 模式
-          # 原因：Xcode 16.0 的 actool 在 build 模式下会偷偷 fallback 到 iphonesimulator SDK
-          # 而 macos-15 Runner 找不到匹配的 simulator runtime
-          # archive 模式不触发这个 bug
-          xcodebuild archive \
+          # 回退到 v2.0.6 成功配置：macos-14 + Xcode 15.0 + build 模式
+          # v2.1.3 改用 macos-15 + Xcode 16 + archive 模式后 CompileAssetCatalog 仍失败
+          # macos-14 + Xcode 15.0 在 v2.0.6 实际能过 CompileAssetCatalog
+          xcodebuild build \
             -project RemotePlay.xcodeproj \
             -scheme RemotePlay \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath build/RemotePlay.xcarchive \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -107,18 +109,17 @@ jobs:
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
             -skipPackagePluginValidation \
             -skipMacroValidation \
-            2>&1 | tail -120
+            build 2>&1 | tail -120
           echo "================================"
-          echo "xcodebuild archive exit: $?"
+          echo "xcodebuild exit: $?"
 
-      - name: Locate archived .app
+      - name: Locate .app
         run: |
           set -e
-          # archive 模式下 .app 位于 .xcarchive/Products/Applications/
-          APP_DIR=$(find build/RemotePlay.xcarchive -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
+          APP_DIR=$(find build -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found in xcarchive"
-            find build/RemotePlay.xcarchive -name "*.app" -type d 2>/dev/null
+            echo "ERROR: RemotePlay.app not found"
+            find build -name "*.app" -type d 2>/dev/null | head -5
             exit 1
           fi
           echo "Found app at: $APP_DIR"
@@ -128,10 +129,10 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          # 从 .xcarchive 找 .app（archive 模式输出位置）
-          APP_DIR=$(find build/RemotePlay.xcarchive -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
+          # 从 build 目录找 .app
+          APP_DIR=$(find build -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found in xcarchive"
+            echo "ERROR: RemotePlay.app not found"
             exit 1
           fi
           APP_PARENT=$(dirname "$APP_DIR")
@@ -187,10 +188,10 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          # 从 .xcarchive 找签名后的 .app
-          APP_DIR=$(find build/RemotePlay.xcarchive -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
+          # 从 build 目录找签名后的 .app
+          APP_DIR=$(find build -name "RemotePlay.app" -type d 2>/dev/null | head -n 1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: RemotePlay.app not found in xcarchive"
+            echo "ERROR: RemotePlay.app not found"
             exit 1
           fi
           echo "App found: $APP_DIR"
@@ -234,30 +235,30 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RemotePlay-ipa
-          path: build/RemotePlay.xcarchive/Products/Applications/Payload/RemotePlay.ipa
+          path: build/Build/Products/Release-iphoneos/Payload/RemotePlay.ipa
           if-no-files-found: error
           retention-days: 14
 
   build-simulator:
     name: Build for iOS Simulator (smoke test)
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 25
     needs: build-ios
 
     strategy:
       matrix:
         destination:
-          - 'platform=iOS Simulator,name=iPhone 16,OS=18.0'
+          - 'platform=iOS Simulator,name=iPhone 14,OS=16.0'
           - 'platform=iOS Simulator,name=iPhone 15,OS=17.0'
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.0
+      - name: Select Xcode 15.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.0'
+          xcode-version: '15.0'
 
       - name: Install XcodeGen
         run: brew install xcodegen
