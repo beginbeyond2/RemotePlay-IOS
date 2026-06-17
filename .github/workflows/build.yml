@@ -55,12 +55,12 @@ jobs:
       # Xcode 16 默认 objectVersion 77（Xcode 16 兼容）
       # 不需要降级到 70，因为 macos-15 Runner 自带 Xcode 16.0+
 
-      - name: Build for iOS device (ad-hoc signed)
+      - name: Build for iOS device (unsigned by xcodebuild)
         run: |
           set -e -o pipefail
-          # ad-hoc 签名（self-signed）让 .app 包含必需的 _CodeSignature/CodeResources
-          # 避免 iOS 26.5 mountypuppet 报 "Can't listdir a file"
-          # Sideloadly/AltStore/3uTools 会用自己的 Apple ID 证书重新签
+          # 步骤 1：xcodebuild 不签名编译
+          # iOS 17/18 SDK 在 build 模式不允许 ad-hoc 签名
+          # 签名留给后面的 codesign --sign - 手动做
           xcodebuild \
             -project RemotePlay.xcodeproj \
             -scheme RemotePlay \
@@ -68,19 +68,49 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=YES \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
             -skipPackagePluginValidation \
             -skipMacroValidation \
             build 2>&1 | tail -120
           echo "================================"
           echo "xcodebuild exit: $?"
+
+      - name: Apply ad-hoc code signature with codesign
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: RemotePlay.app not found"
+            exit 1
+          fi
+          APP_PARENT=$(dirname "$APP_DIR")
+          cd "$APP_PARENT"
+          echo "In directory: $(pwd)"
+          echo "App: $APP_DIR"
+          echo ""
+          echo "--- Before codesign ---"
+          ls -la RemotePlay.app/_CodeSignature/ 2>&1 || echo "(_CodeSignature/ does not exist - need to sign)"
+
+          # 关键：用 macOS 自带 codesign 手动 ad-hoc 签名
+          # -f 强制覆盖
+          # -s - identity 为 "-" 表示 ad-hoc
+          # --deep 递归签所有 framework / dylib
+          codesign --force --sign - --deep RemotePlay.app
+
+          echo ""
+          echo "--- After codesign ---"
+          ls -la RemotePlay.app/_CodeSignature/
+          echo ""
+          echo "--- codesign verify ---"
+          codesign -dv RemotePlay.app 2>&1
+          echo ""
+          echo "--- File permission check ---"
+          ls -la RemotePlay.app/RemotePlay
 
       - name: Verify built .app exists + signed
         run: |
