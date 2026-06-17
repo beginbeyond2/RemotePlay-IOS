@@ -8,6 +8,11 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# 修复：softprops/action-gh-release 需要 contents: write 权限
+# 默认 GITHUB_TOKEN 是 read-only，导致 403 "Resource not accessible"
+permissions:
+  contents: write
+
 jobs:
   build-ios:
     name: Build .app + .ipa (Xcode 15.0, ad-hoc signed)
