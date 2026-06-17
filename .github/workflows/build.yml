@@ -1,4 +1,4 @@
-name: Build iOS App (Unsigned)
+name: Build iOS App (Ad-Hoc Signed)
 
 # 触发时机：每次 push / pull_request / 手动触发
 on:
@@ -10,8 +10,8 @@ on:
 
 jobs:
   build-ios:
-    name: Build .app + .ipa for iOS 16 / iOS 17
-    runs-on: macos-14
+    name: Build .app + .ipa (Xcode 16, ad-hoc signed)
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
@@ -26,16 +26,21 @@ jobs:
           echo "---"
           xcodebuild -version 2>/dev/null || true
 
-      - name: Select Xcode 15.0
+      - name: Select Xcode 16.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.0'
+          xcode-version: '16.0'
 
-      - name: Verify Xcode
+      - name: Verify Xcode + SDK
         run: |
           xcodebuild -version
-          xcrun --show-sdk-path --sdk iphonesimulator
+          echo "---"
           xcrun --show-sdk-path --sdk iphoneos
+          xcrun --show-sdk-version --sdk iphoneos
+          echo "---"
+          # 关键：ad-hoc 签名要求 SDK >= iOS 18
+          SDK_VER=$(xcrun --show-sdk-version --sdk iphoneos)
+          echo "iOS SDK version: $SDK_VER"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -43,23 +48,12 @@ jobs:
       - name: Generate .xcodeproj
         run: xcodegen generate
 
-      - name: Downgrade project.pbxproj objectVersion to 70 (Xcode 15.0+)
-        run: |
-          PBXPROJ="RemotePlay.xcodeproj/project.pbxproj"
-          if [ ! -f "$PBXPROJ" ]; then
-            echo "ERROR: $PBXPROJ not found"
-            exit 1
-          fi
-          echo "--- Before ---"
-          grep "objectVersion" "$PBXPROJ" || echo "(no objectVersion found)"
-          sed -i.bak 's/objectVersion = 77;/objectVersion = 70;/g' "$PBXPROJ"
-          rm -f "${PBXPROJ}.bak"
-          echo "--- After ---"
-          grep "objectVersion" "$PBXPROJ" || echo "(no objectVersion found)"
-
-      - name: Verify project can be read
+      - name: Verify .xcodeproj readable
         run: |
           xcodebuild -project RemotePlay.xcodeproj -list 2>&1
+
+      # Xcode 16 默认 objectVersion 77（Xcode 16 兼容）
+      # 不需要降级到 70，因为 macos-15 Runner 自带 Xcode 16.0+
 
       - name: Build for iOS device (ad-hoc signed)
         run: |
@@ -88,7 +82,7 @@ jobs:
           echo "================================"
           echo "xcodebuild exit: $?"
 
-      - name: Verify built .app exists
+      - name: Verify built .app exists + signed
         run: |
           APP_PATH=$(find build -name "RemotePlay.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -97,20 +91,25 @@ jobs:
           fi
           echo "Found app at: $APP_PATH"
           ls -la "$APP_PATH"
-          # Show bundle binary permissions (关键！macOS zip 会保留这些)
+          echo ""
+          echo "--- _CodeSignature/ contents ---"
+          ls -la "$APP_PATH/_CodeSignature/" 2>&1
+          echo ""
+          echo "--- Bundle binary ---"
           ls -la "$APP_PATH/RemotePlay"
           file "$APP_PATH/RemotePlay"
+          echo ""
+          echo "--- Info.plist key fields ---"
           PLIST="$APP_PATH/Info.plist"
           echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo MISSING)"
           echo "CFBundleVersion: $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null || echo MISSING)"
           echo "MinimumOSVersion: $(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$PLIST" 2>/dev/null || echo MISSING)"
 
-      # 关键修复：直接用 macOS 自带 zip 打 IPA
+      # 关键：直接用 macOS 自带 zip 打 IPA
       # 不用 PowerShell / Windows Compress-Archive（它不写 unix file permissions）
       - name: Package .ipa with macOS zip (preserves unix permissions)
         run: |
           set -e
-          # 用 GITHUB_WORKSPACE 拿仓库根绝对路径
           cd "$GITHUB_WORKSPACE"
           APP_DIR=$(find build -name "RemotePlay.app" -type d | head -n 1)
           if [ -z "$APP_DIR" ]; then
@@ -150,7 +149,6 @@ jobs:
           unzip -l RemotePlay.ipa | head -30
           echo ""
           echo "--- IPA 中 RemotePlay 主二进制权限 ---"
-          # 用 unzip -Z 查权限
           unzip -Z RemotePlay.ipa Payload/RemotePlay.app/RemotePlay 2>&1 | head -5
           echo ""
           echo "--- IPA 路径 ---"
@@ -166,36 +164,30 @@ jobs:
 
   build-simulator:
     name: Build for iOS Simulator (smoke test)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 25
     needs: build-ios
 
     strategy:
       matrix:
         destination:
+          - 'platform=iOS Simulator,name=iPhone 16,OS=18.0'
           - 'platform=iOS Simulator,name=iPhone 15,OS=17.0'
-          - 'platform=iOS Simulator,name=iPhone 14,OS=16.0'
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15.0
+      - name: Select Xcode 16.0
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.0'
+          xcode-version: '16.0'
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Generate .xcodeproj
         run: xcodegen generate
-
-      - name: Downgrade project.pbxproj objectVersion to 70
-        run: |
-          PBXPROJ="RemotePlay.xcodeproj/project.pbxproj"
-          sed -i.bak 's/objectVersion = 77;/objectVersion = 70;/g' "$PBXPROJ"
-          rm -f "${PBXPROJ}.bak"
 
       - name: Build for simulator
         run: |
