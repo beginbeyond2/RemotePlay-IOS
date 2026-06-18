@@ -173,9 +173,16 @@ final class RemoteClient {
     ///   recvX(frameTypeByte, 4); frameType = byteArrayToInt(frameTypeByte);
     ///   recvX(frameLenByte, 4);   frameLen  = byteArrayToInt(frameLenByte);
     ///   recvX(frameData, frameLen); onFrame(frameData, 0, frameLen);
+    ///
+    /// v2.3.3 修复：提前把 typeBytes 复制为独立 Data。
+    /// 之前 typeBytes = receiveBuffer.prefix(4) 是 SubSequence，引用 receiveBuffer 内存。
+    /// removeFirst(totalNeeded) 后 receiveBuffer 前部内存被释放/重分配，
+    /// 接着访问 typeBytes[1] 时触发 SIGTRAP（Data._Representation.subscript getter）。
+    /// 修复方法：用 receiveBuffer.subdata(in: 0..<4) 拿到独立 Data。
     private func drainFrames() {
         while receiveBuffer.count >= 8 {
-            let typeBytes = receiveBuffer.prefix(4)
+            // 关键：subdata 返回独立 Data，不引用 receiveBuffer 内部 buffer
+            let typeBytes = receiveBuffer.subdata(in: 0..<4)
             let lenBytes = receiveBuffer.subdata(in: 4..<8)
             let frameLen = lenBytes.withUnsafeBytes { ptr -> UInt32 in
                 let p = ptr.bindMemory(to: UInt8.self)
@@ -195,6 +202,7 @@ final class RemoteClient {
             let totalNeeded = 8 + Int(frameLen)
             if receiveBuffer.count < totalNeeded { break }
 
+            // subdata 返回独立 Data，可安全跨 removeFirst
             let payload = receiveBuffer.subdata(in: 8..<totalNeeded)
             receiveBuffer.removeFirst(totalNeeded)
 
@@ -206,8 +214,9 @@ final class RemoteClient {
                        (UInt32(p[3]) << 24)
             }
 
+            // typeBytes 和 payload 现在都是独立 Data，访问 typeBytes[1] 安全
             let frame = IncomingFrame(
-                typeBytes: Data(typeBytes),
+                typeBytes: typeBytes,
                 type: typeInt,
                 flags: typeBytes[1],
                 payload: payload
