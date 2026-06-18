@@ -3,7 +3,7 @@
 iOS 客户端 for Micsig 示波器远程控制。
 
 <!--BEGIN_BUILD_BADGE-->
-<sub>📦 Latest build: <b>v2.2.2</b> · commit <code>d64b728</code> · 2026-06-17 12:28 UTC · ✅ passing</sub>
+<sub>📦 Latest build: <b>vios-latest</b> · commit <code>69f8f19</code> · 2026-06-18 02:59 UTC · ✅ passing</sub>
 <!--END_BUILD_BADGE-->
 
 ---
@@ -13,7 +13,7 @@ iOS 客户端 for Micsig 示波器远程控制。
 | 项 | 状态 |
 |---|---|
 | CI Build | ![Build](https://github.com/beginbeyond2/RemotePlay-IOS/actions/workflows/build.yml/badge.svg) |
-| 最新版本 | v2.2.2 |
+| 最新版本 | vios-latest |
 | 平台 | iOS 16+ |
 | 架构 | arm64 |
 | 适配设备 | iPhone 11 ~ iPhone 17 Pro Max |
