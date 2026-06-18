@@ -210,6 +210,7 @@ final class RemotePlayViewModel: ObservableObject {
     }
 
     /// 按钮按下。
+    /// 对应 Android 端 MainActivity.onTouchButtonListener / R.id.up / R.id.down
     func onButton(_ code: RemoteButtonCode) {
         guard isConnected else { return }
         // up / down 在 Android 端是组合 clickPoint，iOS 端等价
@@ -238,9 +239,12 @@ final class RemotePlayViewModel: ObservableObject {
         client?.send(CommandBuilder.button(code: code.rawValue, pressDown: false))
     }
 
-    private func emitMenuSequence(yPoints: [Int], press: [Bool]) {
-        // x=videoWidth*200/800，y 缩放到 600 分之一
-        let x = Int(videoSize.width) * 200 / 800
+    /// 发出菜单按钮的 clickPoint 序列。
+    /// 协议约定：x 缩放到 xRatioDen 分之 xRatioNum，y 缩放到 600 分之 yPoints[i]
+    /// 与 Android 端 MainActivity.clickPoint 中的 videoWidth*X/800 / videoHeight*Y/600 严格一致
+    private func emitMenuSequence(xRatioNum: Int, xRatioDen: Int,
+                                  yPoints: [Int], press: [Bool]) {
+        let x = Int(videoSize.width) * xRatioNum / xRatioDen
         for (i, yRaw) in yPoints.enumerated() {
             let y = Int(videoSize.height) * yRaw / 600
             client?.send(CommandBuilder.touch(x: x, y: y, pressDown: press[i]))
