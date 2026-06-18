@@ -18,10 +18,9 @@
 //  - 0x67 (SPS)、0x68 (PPS) 用于构造 CMVideoFormatDescription。
 //  - 0x65 (IDR) / 0x41 (P) 等为实际图像数据。
 //
-//  v2.2.8 重大重构：废弃 v2.0.6 的 CMSampleBufferCreateReady(CMBlockBuffer) 路径
-//  （iOS 18+ AVSampleBufferDisplayLayer 强制要求 image buffer，
-//   否则在 enqueue 时触发 SIGTRAP/abort），改用 VTDecompressionSession
-//  解码出 CVPixelBuffer，再用 CMSampleBufferCreateForImageBuffer 构造。
+//  v2.3.0 重大修复：使用 @convention(c) 全局回调，避免 Swift 编译器
+//  在 "outputCallback: nil" + "closure-based VTDecompressionSessionDecodeFrame"
+//  混用时的 overload 解析失败。
 //
 
 import Foundation
@@ -33,6 +32,20 @@ import CoreVideo
 protocol H264DecoderDelegate: AnyObject {
     /// 视频尺寸发生变化（对应 Android 端 INFO_OUTPUT_FORMAT_CHANGED）。
     func decoderDidChangeVideoSize(_ size: CGSize)
+}
+
+// 顶层 @convention(c) 回调函数（VTDecompressionSessionCreate 要求）
+// 不能捕获 Swift context，所以通过 refcon 拿到 H264Decoder 实例。
+private let vtOutputCallback: VTDecompressionOutputCallback = {
+    (refcon, status, _, imageBuffer, pts, _) in
+    guard let refcon = refcon else { return }
+    let decoder = Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue()
+    if status != noErr {
+        NSLog("H264Decoder: VT callback status=\(status)")
+        return
+    }
+    guard let pb = imageBuffer else { return }
+    decoder.enqueuePixelBuffer(pb, presentationTime: pts)
 }
 
 final class H264Decoder {
@@ -177,7 +190,7 @@ final class H264Decoder {
         let size = CGSize(width: Int(dims.width), height: Int(dims.height))
         NSLog("H264Decoder: video size \(Int(dims.width))x\(Int(dims.height))")
 
-        // 创建 VTDecompressionSession
+        // 创建 VTDecompressionSession（必须用 @convention(c) 回调）
         if let session = makeDecompressionSession(format: fmt) {
             self.decompressionSession = session
             DispatchQueue.main.async { [weak self] in
@@ -187,13 +200,18 @@ final class H264Decoder {
     }
 
     private func makeDecompressionSession(format: CMVideoFormatDescription) -> VTDecompressionSession? {
+        // v2.3.0 修复：用顶层 @convention(c) 回调 + passUnretained refcon
+        // 之前 v2.2.8 用了 outputCallback: nil + closure-based decode，
+        // Swift 编译器无法 resolve overload。
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
             decoderSpecification: nil,
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
-            outputCallback: nil,
+            outputCallback: vtOutputCallback,
             decompressionSessionOut: &session
         )
         guard status == noErr, let s = session else {
@@ -201,6 +219,11 @@ final class H264Decoder {
             return nil
         }
         VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+
+        // 记录 refcon 供 decode 时用（passUnretained 必须保 self 不被释放）
+        // 实际由 VideoDisplayView 强引用 H264Decoder 维持生命周期
+        _ = refcon
+
         return s
     }
 
@@ -270,26 +293,22 @@ final class H264Decoder {
         frameIndex &+= 1
 
         // 提交到 VTDecompressionSession 解码
-        var flagsOut: VTDecodeInfoFlags = []
+        // v2.3.0 修复：使用同步版本（不带 closure），因为 callback 已在
+        // session 创建时指定（vtOutputCallback）。通过 frameRefcon 把 self 传给 callback。
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
         let status = VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: sb,
             flags: [],
-            frameRefcon: nil,
-            infoFlagsOut: &flagsOut
-        ) { [weak self] status, _, imageBuffer, pts, _ in
-            guard status == noErr, let pb = imageBuffer else {
-                NSLog("H264Decoder: VT decode callback status=\(status)")
-                return
-            }
-            self?.enqueuePixelBuffer(pb, presentationTime: pts)
-        }
+            frameRefcon: refcon,
+            infoFlagsOut: nil
+        )
         if status != noErr {
-            NSLog("H264Decoder: VTDecompressionSessionDecodeFrame submit failed: \(status)")
+            NSLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(status)")
         }
     }
 
-    private func enqueuePixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+    fileprivate func enqueuePixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
         // 用 pixel buffer 构造 CMVideoFormatDescription
         var fmt: CMVideoFormatDescription?
         let status1 = CMVideoFormatDescriptionCreateForImageBuffer(
