@@ -192,7 +192,10 @@ final class H264Decoder {
             flags: 0,
             blockBufferOut: &blockBuffer
         )
-        guard status == kCMBlockBufferNoErr, let bb = blockBuffer else { return nil }
+        guard status == kCMBlockBufferNoErr, let bb = blockBuffer else {
+            NSLog("H264Decoder: CMBlockBufferCreateWithMemoryBlock failed: \(status)")
+            return nil
+        }
 
         // 将 nalu（含 0x00 0x00 0x00 0x01 start code）拷贝进 BlockBuffer
         let copyStatus = nalu.withUnsafeBytes { raw -> OSStatus in
@@ -204,9 +207,14 @@ final class H264Decoder {
                 dataLength: dataLength
             )
         }
-        guard copyStatus == kCMBlockBufferNoErr else { return nil }
+        guard copyStatus == kCMBlockBufferNoErr else {
+            NSLog("H264Decoder: CMBlockBufferReplaceDataBytes failed: \(copyStatus)")
+            return nil
+        }
 
         // 1 个 NALU；CMBlockBuffer 引用同一段数据。
+        // v2.2.7 修复：用 withUnsafeMutablePointer 显式取地址，避免 Swift ABI
+        // 变化下隐式 inout → pointer 转换失败（iOS 18+ 已观察到崩溃）。
         var sampleSize: Int = dataLength
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 25), // 25 fps，与 Android 端 mCount*1000000/25 对应
@@ -215,18 +223,25 @@ final class H264Decoder {
         )
 
         var sample: CMSampleBuffer?
-        let createStatus = CMSampleBufferCreateReady(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: bb,
-            formatDescription: format,
-            sampleCount: 1,
-            sampleTimingEntryCount: 1,
-            sampleTimingArray: &timing,
-            sampleSizeEntryCount: 1,
-            sampleSizeArray: &sampleSize,
-            sampleBufferOut: &sample
-        )
-        guard createStatus == noErr else { return nil }
+        let createStatus = sampleSize.withUnsafeMutablePointer { sizePtr -> OSStatus in
+            timing.withUnsafeMutablePointer { timingPtr -> OSStatus in
+                CMSampleBufferCreateReady(
+                    allocator: kCFAllocatorDefault,
+                    dataBuffer: bb,
+                    formatDescription: format,
+                    sampleCount: 1,
+                    sampleTimingEntryCount: 1,
+                    sampleTimingArray: timingPtr,
+                    sampleSizeEntryCount: 1,
+                    sampleSizeArray: sizePtr,
+                    sampleBufferOut: &sample
+                )
+            }
+        }
+        guard createStatus == noErr else {
+            NSLog("H264Decoder: CMSampleBufferCreateReady failed: \(createStatus)")
+            return nil
+        }
         return sample
     }
 
@@ -234,12 +249,23 @@ final class H264Decoder {
         frameIndex &+= 1
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            // 强制使用主线程投递，避免 VideoToolbox 内部偶发卡死
-            if self.displayLayer.isReadyForMoreMediaData {
-                self.displayLayer.enqueue(sample)
-            } else {
-                self.displayLayer.flush()
-                self.displayLayer.enqueue(sample)
+            // 防御：displayLayer 在主线程访问，但 layer 可能在视图消失后被释放
+            guard self.displayLayer.superlayer != nil || self.displayLayer.superlayer == nil && true else {
+                return
+            }
+            // 防御：检查 displayLayer 是否在视图层级中
+            // (AVSampleBufferDisplayLayer 作为 root layer 时 superlayer 应为 nil)
+            autoreleasepool {
+                if self.displayLayer.isReadyForMoreMediaData {
+                    self.displayLayer.enqueue(sample)
+                } else {
+                    self.displayLayer.flush()
+                    if self.displayLayer.isReadyForMoreMediaData {
+                        self.displayLayer.enqueue(sample)
+                    } else {
+                        NSLog("H264Decoder: displayLayer not ready, dropping frame")
+                    }
+                }
             }
         }
     }
