@@ -129,7 +129,14 @@ final class RemoteClient {
     /// 发送 12 字节上行指令。
     /// 对应 Android 端 SendThread。
     func send(_ data: Data) {
-        guard let conn = connection, conn.state == .ready else { return }
+        guard let conn = connection else {
+            NSLog("RemoteClient send skipped: no connection")
+            return
+        }
+        guard conn.state == .ready else {
+            NSLog("RemoteClient send skipped: connection state=\(conn.state)")
+            return
+        }
         conn.send(content: data, completion: .contentProcessed { error in
             if let error {
                 NSLog("RemoteClient send error: \(error.localizedDescription)")

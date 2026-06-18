@@ -183,14 +183,23 @@ struct RemoteButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 4))
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !pressed { pressed = true; onTouch() }
+                    .onChanged { value in
+                        // 只在手指仍在按钮内时按下；滑出则取消
+                        if isInsideButton(value.location) {
+                            if !pressed { pressed = true; onTouch() }
+                        } else if pressed {
+                            pressed = false; onRelease()
+                        }
                     }
                     .onEnded { _ in
-                        pressed = false
-                        onRelease()
+                        if pressed { pressed = false; onRelease() }
                     }
             )
+    }
+
+    private func isInsideButton(_ point: CGPoint) -> Bool {
+        // 因为按钮充满 GeometryReader 宽度，简化判断用 y 坐标
+        return point.y >= 0 && point.y <= height
     }
 }
 
@@ -228,13 +237,20 @@ struct RemoteIconButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 4))
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !pressed { pressed = true; onTouch() }
+                    .onChanged { value in
+                        if isInsideButton(value.location) {
+                            if !pressed { pressed = true; onTouch() }
+                        } else if pressed {
+                            pressed = false; onRelease()
+                        }
                     }
                     .onEnded { _ in
-                        pressed = false
-                        onRelease()
+                        if pressed { pressed = false; onRelease() }
                     }
             )
+    }
+
+    private func isInsideButton(_ point: CGPoint) -> Bool {
+        return point.y >= 0 && point.y <= height
     }
 }

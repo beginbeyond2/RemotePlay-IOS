@@ -158,8 +158,6 @@ final class H264Decoder {
                             allocator: kCFAllocatorDefault,
                             parameterSetCount: 2,
                             parameterSetPointers: paramSetPtr.baseAddress,
-                            parameterSetPointers: paramSetPtr.baseAddress,
-                            parameterSetPointers: paramSetPtr.baseAddress,
                             parameterSetSizes: paramSizesPtr.baseAddress,
                             nalUnitHeaderLength: 4,
                             formatDescriptionOut: &format
