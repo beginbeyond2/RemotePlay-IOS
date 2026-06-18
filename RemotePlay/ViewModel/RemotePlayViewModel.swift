@@ -216,10 +216,16 @@ final class RemotePlayViewModel: ObservableObject {
         switch code {
         case .up:
             // 对应 Android up 按钮：连续 4 个 clickPoint
-            emitMenuSequence(yPoints: [560, 550, 540, 510], press: [true, true, true, false])
+            // x = videoWidth * 500/800（与 Android 端完全一致，屏幕中右）
+            emitMenuSequence(xRatioNum: 500, xRatioDen: 800,
+                             yPoints: [560, 550, 540, 510],
+                             press: [true, true, true, false])
         case .down:
             // 对应 Android down 按钮：连续 4 个 clickPoint
-            emitMenuSequence(yPoints: [20, 30, 40, 50], press: [true, true, true, false])
+            // x = videoWidth * 200/800（与 Android 端完全一致，屏幕左 1/4）
+            emitMenuSequence(xRatioNum: 200, xRatioDen: 800,
+                             yPoints: [20, 30, 40, 50],
+                             press: [true, true, true, false])
         default:
             client?.send(CommandBuilder.button(code: code.rawValue, pressDown: true))
         }

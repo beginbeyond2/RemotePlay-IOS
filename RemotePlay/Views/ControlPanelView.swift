@@ -102,6 +102,13 @@ struct ControlPanelView: View {
                 startPoint: .top, endPoint: .bottom
             )
         )
+        // 点击控制栏空白区域（非按钮/输入框）收回键盘
+        // 使用 simultaneousGesture 避免吃掉子按钮的事件
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                if ipFocused { ipFocused = false }
+            }
+        )
         .onAppear { ipDraft = viewModel.ip }
     }
 
@@ -113,6 +120,18 @@ struct ControlPanelView: View {
                 .frame(maxWidth: .infinity)
                 .focused($ipFocused)
                 .onSubmit { commitIP() }
+                // iOS decimalPad 没有 Done 键 — 手动加键盘顶部的 Done 工具栏
+                // 对应 Android 端 imeOptions="actionDone" 的行为
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") {
+                            ipFocused = false
+                            commitIP()
+                        }
+                        .fontWeight(.semibold)
+                    }
+                }
             Button {
                 commitIP()
                 ipFocused = false
