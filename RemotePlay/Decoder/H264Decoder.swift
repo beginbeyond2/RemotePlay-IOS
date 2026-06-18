@@ -270,21 +270,20 @@ final class H264Decoder {
             decodeTimeStamp: .invalid
         )
 
-        let buildStatus: OSStatus = sampleSize.withUnsafeMutablePointer { sizePtr -> OSStatus in
-            sampleTiming.withUnsafeMutablePointer { timingPtr -> OSStatus in
-                CMSampleBufferCreateReady(
-                    allocator: kCFAllocatorDefault,
-                    dataBuffer: bb,
-                    formatDescription: format,
-                    sampleCount: 1,
-                    sampleTimingEntryCount: 1,
-                    sampleTimingArray: timingPtr,
-                    sampleSizeEntryCount: 1,
-                    sampleSizeArray: sizePtr,
-                    sampleBufferOut: &sampleBuffer
-                )
-            }
-        }
+        // v2.3.1 修复：用 &-operator 写法，Swift 5.5+ 自动把 inout 转 UnsafePointer。
+        // 之前 v2.3.0 用了 sampleSize.withUnsafeMutablePointer，但 Int / CMSampleTimingInfo
+        // 是值类型，没有这个实例方法，编译错误。
+        let buildStatus = CMSampleBufferCreateReady(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: bb,
+            formatDescription: format,
+            sampleCount: 1,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &sampleTiming,
+            sampleSizeEntryCount: 1,
+            sampleSizeArray: &sampleSize,
+            sampleBufferOut: &sampleBuffer
+        )
         guard buildStatus == noErr, let sb = sampleBuffer else {
             NSLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus)")
             return
