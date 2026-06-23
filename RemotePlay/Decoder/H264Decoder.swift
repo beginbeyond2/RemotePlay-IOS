@@ -33,18 +33,26 @@ protocol H264DecoderDelegate: AnyObject {
     func decoderDidChangeVideoSize(_ size: CGSize)
 }
 
-// 顶层 @convention(c) 回调（VTDecompressionSessionCreate 要求）
-// 不能捕获 Swift context，用 refcon 拿回 H264Decoder 实例。
-private let vtOutputCallback: VTDecompressionOutputCallback = {
-    (refcon, status, _, imageBuffer, pts, _) in
-    guard let refcon else { return }
-    let decoder = Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue()
-    if status != noErr {
-        NSLog("H264Decoder: VT callback status=\(status)")
-        return
+// v2.3.6 改用 final class 静态方法作为 @convention(c) 回调
+// Swift 中 closure literal 初始化 @convention(c) 类型的顶级 let，
+// 编译器在某些 Swift 版本可能报"无法推断类型"或"C 函数指针不能有 capture"。
+// 用 static func + @convention(c) 注解是更可靠的方式。
+extension H264Decoder {
+    /// VTDecompressionSession 的解码完成回调。
+    /// 必须用 @convention(c) 因为 VideoToolbox API 期望 C 函数指针。
+    /// 通过 refcon（OpaquePointer）拿回 H264Decoder 实例。
+    static let vtOutputCallback: @convention(c) (
+        UnsafeMutableRawPointer?, OSStatus, UInt32, CVImageBuffer?, CMTime, CMTime
+    ) -> Void = { refcon, status, _, imageBuffer, pts, _ in
+        guard let refcon = refcon else { return }
+        guard status == noErr else {
+            NSLog("H264Decoder: VT callback status=\(status)")
+            return
+        }
+        guard let pb = imageBuffer else { return }
+        let decoder = Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue()
+        decoder.enqueuePixelBuffer(pb, presentationTime: pts)
     }
-    guard let pb = imageBuffer else { return }
-    decoder.enqueuePixelBuffer(pb, presentationTime: pts)
 }
 
 final class H264Decoder {
@@ -214,7 +222,7 @@ final class H264Decoder {
             formatDescription: format,
             decoderSpecification: nil,
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
-            outputCallback: vtOutputCallback,
+            outputCallback: H264Decoder.vtOutputCallback,
             decompressionSessionOut: &session
         )
         guard status == noErr, let s = session else {

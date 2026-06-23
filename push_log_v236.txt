@@ -1,0 +1,2 @@
+cwd: D:\Project\Scope\ZZ\STO\trunk\v1x\program\arm\RemotePlay-iOS
+=== git add . ===
