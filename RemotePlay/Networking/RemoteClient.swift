@@ -174,23 +174,33 @@ final class RemoteClient {
     ///   recvX(frameLenByte, 4);   frameLen  = byteArrayToInt(frameLenByte);
     ///   recvX(frameData, frameLen); onFrame(frameData, 0, frameLen);
     ///
-    /// v2.3.3 修复：提前把 typeBytes 复制为独立 Data。
-    /// 之前 typeBytes = receiveBuffer.prefix(4) 是 SubSequence，引用 receiveBuffer 内存。
-    /// removeFirst(totalNeeded) 后 receiveBuffer 前部内存被释放/重分配，
-    /// 接着访问 typeBytes[1] 时触发 SIGTRAP（Data._Representation.subscript getter）。
-    /// 修复方法：用 receiveBuffer.subdata(in: 0..<4) 拿到独立 Data。
+    /// v2.3.4 修复：把所有 sub-data 强制转为 [UInt8] 数组。
+    ///
+    /// 之前 v2.2.6 / v2.3.3 都没真正解决 use-after-free：
+    ///   - v2.2.6: typeBytes = receiveBuffer.prefix(4) 是 SubSequence，引用 receiveBuffer
+    ///   - v2.3.3: typeBytes = receiveBuffer.subdata(in: 0..<4) 在 iOS 26 的 Swift
+    ///              实现中**仍 share backing buffer**（copy-on-write 优化下 subdata
+    ///              不一定复制）
+    ///
+    /// 当 receiveBuffer.removeFirst(totalNeeded) 触发 buffer 重新分配后，
+    /// typeBytes 仍指向旧 backing（已被 free）→ 访问 typeBytes[1] 触发
+    /// Data._Representation.subscript.getter SIGTRAP。
+    ///
+    /// 真正安全的做法：把 Data 强制转换为 [UInt8]（Array）。
+    /// Array 是 Swift 中的值类型，Array(_:) 构造器**总是**复制底层字节。
+    /// 复制后的 [UInt8] 不可能引用任何 backing buffer，use-after-free 不可能发生。
     private func drainFrames() {
         while receiveBuffer.count >= 8 {
-            // 关键：subdata 返回独立 Data，不引用 receiveBuffer 内部 buffer
-            let typeBytes = receiveBuffer.subdata(in: 0..<4)
-            let lenBytes = receiveBuffer.subdata(in: 4..<8)
-            let frameLen = lenBytes.withUnsafeBytes { ptr -> UInt32 in
-                let p = ptr.bindMemory(to: UInt8.self)
-                return UInt32(p[0]) |
-                       (UInt32(p[1]) << 8) |
-                       (UInt32(p[2]) << 16) |
-                       (UInt32(p[3]) << 24)
-            }
+            // 关键：Array(_:) 构造器强制复制为值类型，100% 安全
+            let header: [UInt8] = Array(receiveBuffer.prefix(8))
+            let typeInt = UInt32(header[0]) |
+                          (UInt32(header[1]) << 8) |
+                          (UInt32(header[2]) << 16) |
+                          (UInt32(header[3]) << 24)
+            let frameLen = UInt32(header[4]) |
+                           (UInt32(header[5]) << 8) |
+                           (UInt32(header[6]) << 16) |
+                           (UInt32(header[7]) << 24)
 
             // 防御：避免恶意 / 异常长度撑爆内存
             if frameLen > 8 * 1024 * 1024 {
@@ -202,24 +212,24 @@ final class RemoteClient {
             let totalNeeded = 8 + Int(frameLen)
             if receiveBuffer.count < totalNeeded { break }
 
-            // subdata 返回独立 Data，可安全跨 removeFirst
-            let payload = receiveBuffer.subdata(in: 8..<totalNeeded)
+            // flags 从 header 数组取，header 是 [UInt8]，访问绝对安全
+            let flags: UInt8 = header[1]
+
+            // payload 同样强制 Array 复制
+            let payloadBytes: [UInt8]
+            if frameLen == 0 {
+                payloadBytes = []
+            } else {
+                payloadBytes = Array(receiveBuffer.prefix(totalNeeded).suffix(Int(frameLen)))
+            }
             receiveBuffer.removeFirst(totalNeeded)
 
-            let typeInt = typeBytes.withUnsafeBytes { ptr -> UInt32 in
-                let p = ptr.bindMemory(to: UInt8.self)
-                return UInt32(p[0]) |
-                       (UInt32(p[1]) << 8) |
-                       (UInt32(p[2]) << 16) |
-                       (UInt32(p[3]) << 24)
-            }
-
-            // typeBytes 和 payload 现在都是独立 Data，访问 typeBytes[1] 安全
+            // typeBytes 字段用 [UInt8] 强制 Data 构造器（Data 构造器也是复制）
             let frame = IncomingFrame(
-                typeBytes: typeBytes,
+                typeBytes: Data([header[0], header[1], header[2], header[3]]),
                 type: typeInt,
-                flags: typeBytes[1],
-                payload: payload
+                flags: flags,
+                payload: Data(payloadBytes)
             )
             frameHandler?(frame)
         }
