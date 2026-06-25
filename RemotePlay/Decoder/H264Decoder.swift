@@ -2,7 +2,7 @@
 //  H264Decoder.swift
 //  RemotePlay
 //
-//  v2.3.7 重写：使用 VideoToolbox 硬解 H.264（VTDecompressionSession），
+//  v2.3.8 重写：使用 VideoToolbox 硬解 H.264（VTDecompressionSession），
 //  拿到 CVPixelBuffer 后用 CMSampleBufferCreateForImageBuffer 构造
 //  iOS 18+ 合规的 sample buffer，enqueue 到 AVSampleBufferDisplayLayer。
 //
@@ -13,11 +13,18 @@
 //    mMediaCodec.queueInputBuffer(...);
 //    mMediaCodec.dequeueOutputBuffer(...);
 //
-//  v2.3.6 编译错误原因：extension H264Decoder { static let ... } 写在
-//  final class H264Decoder 之前。Swift 编译器在 static let 初始化 closure
-//  中引用 H264Decoder 类型时，无法解析类型（"Cannot find 'H264Decoder'
-//  in scope"或"reference to type 'H264Decoder' before declaration"）。
-//  v2.3.7 修复：把 final class H264Decoder 移到最前面，extension 放后面。
+//  v2.3.7 编译错误原因：
+//    1) `outputCallback:` 期望 UnsafePointer<VTDecompressionOutputCallbackRecord>?
+//       （不是 @convention(c) function pointer）。Swift 在 VideoToolbox SDK 里把
+//       callback 包装成 VTDecompressionOutputCallbackRecord struct（含 function
+//       pointer + refcon）。v2.3.7 直接传 closure 类型，编译失败。
+//    2) spsData/ppsData 是 Data?，nalu.body 是 [UInt8]，不能直接赋值。
+//    3) paramSetPtr.baseAddress 是 UnsafePointer? 可选，需要 force unwrap。
+//
+//  v2.3.8 修复：
+//    1) 用 VTDecompressionOutputCallbackRecord struct 包装 callback + refcon。
+//    2) 显式 Data(nalu.body) 转换。
+//    3) baseAddress! force unwrap。
 //
 
 import Foundation
@@ -170,18 +177,18 @@ final class H264Decoder {
 
         NSLog("H264Decoder: parsed \(nalus.count) nalus")
 
-        // 第一遍：收集 SPS / PPS
+        // 第一遍：收集 SPS / PPS（v2.3.8: 显式转 Data 类型）
         for nalu in nalus {
             if nalu.type == 0x07 {
-                spsData = nalu.body
+                spsData = Data(nalu.body)
             } else if nalu.type == 0x08 {
-                ppsData = nalu.body
+                ppsData = Data(nalu.body)
             }
         }
 
-        // 如有 SPS+PPS 且 session 还没建 → 建
+        // 如有 SPS+PPS 且 session 还没建 → 建（v2.3.8: 转 [UInt8] 给 makeFormatDescription）
         if let sps = spsData, let pps = ppsData, formatDescription == nil {
-            makeFormatDescription(sps: sps, pps: pps)
+            makeFormatDescription(sps: Array(sps), pps: Array(pps))
         }
 
         // 第二遍：解码 VCL NALU
@@ -211,8 +218,8 @@ final class H264Decoder {
                         CMVideoFormatDescriptionCreateFromH264ParameterSets(
                             allocator: kCFAllocatorDefault,
                             parameterSetCount: 2,
-                            parameterSetPointers: paramSetPtr.baseAddress,
-                            parameterSetSizes: paramSizesPtr.baseAddress,
+                            parameterSetPointers: paramSetPtr.baseAddress!,
+                            parameterSetSizes: paramSizesPtr.baseAddress!,
                             nalUnitHeaderLength: 4,
                             formatDescriptionOut: &format
                         )
@@ -240,10 +247,14 @@ final class H264Decoder {
     }
 
     private func makeDecompressionSession(format: CMVideoFormatDescription) -> Bool {
-        // v2.3.7 关键：用 H264Decoder.vtOutputCallback（C 函数形式）
-        // 之前 v2.2.8 用了 outputCallback: nil + closure-based decode，
-        // Swift 编译器无法 resolve overload。
+        // v2.3.8: outputCallback 期望 UnsafePointer<VTDecompressionOutputCallbackRecord>?
+        // Swift 把 callback + refcon 包装在 VTDecompressionOutputCallbackRecord struct 里。
+        // 必须用 struct 的 init 或直接构造 record，不能直接传 @convention(c) closure。
         let refcon = Unmanaged.passUnretained(self).toOpaque()
+        var callbackRecord = VTDecompressionOutputCallbackRecord(
+            decompressionOutputCallback: H264Decoder.vtOutputCallback,
+            decompressionOutputRefCon: refcon
+        )
 
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
@@ -251,7 +262,7 @@ final class H264Decoder {
             formatDescription: format,
             decoderSpecification: nil,
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
-            outputCallback: H264Decoder.vtOutputCallback,
+            outputCallback: &callbackRecord,
             decompressionSessionOut: &session
         )
         guard status == noErr, let s = session else {
