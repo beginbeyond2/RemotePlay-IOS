@@ -358,14 +358,28 @@ final class H264Decoder {
     }
 }
 
-// v2.3.7：把 extension 放在 class 声明之后。
+// v2.3.10：把 extension 放在 class 声明之后。
 // 静态 @convention(c) 回调：VTDecompressionSession 的解码完成 callback。
-// 必须用 @convention(c) 因为 VideoToolbox API 期望 C 函数指针。
-// 通过 refcon（UnsafeMutableRawPointer）拿回 H264Decoder 实例。
+//
+// Apple SDK 中 VTDecompressionOutputCallback 的真实签名是 7 参数：
+//   (
+//     UnsafeMutableRawPointer?,    // decompressionOutputRefCon
+//     UnsafeMutableRawPointer?,    // sourceFrameRefCon
+//     OSStatus,                    // status
+//     VTDecodeInfoFlags,           // infoFlags  (UInt32 的 typealias)
+//     CVImageBuffer?,              // imageBuffer
+//     CMTime,                      // presentationTimeStamp
+//     CMTime                       // presentationDuration
+//   ) -> Void
+//
+// v2.3.7 ~ v2.3.9 都用了 6 参数 closure，漏了 sourceFrameRefCon，
+// 导致 "cannot convert ... to specified type 'VTDecompressionOutputCallback'" 错误。
+//
+// v2.3.10 直接用 SDK 的 typealias VTDecompressionOutputCallback 作显式类型，
+// 这样编译器会用 SDK 真实签名（7 参数），不会再因 type 不匹配报错。
 extension H264Decoder {
-    static let vtOutputCallback: @convention(c) (
-        UnsafeMutableRawPointer?, OSStatus, UInt32, CVImageBuffer?, CMTime, CMTime
-    ) -> Void = { refcon, status, _, imageBuffer, pts, _ in
+    static let vtOutputCallback: VTDecompressionOutputCallback = {
+        (refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, pts, duration) in
         guard let refcon = refcon else { return }
         guard status == noErr else {
             NSLog("H264Decoder: VT callback status=\(status)")
@@ -374,5 +388,6 @@ extension H264Decoder {
         guard let pb = imageBuffer else { return }
         let decoder = Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue()
         decoder.enqueuePixelBuffer(pb, presentationTime: pts)
+        // 注：sourceFrameRefCon / infoFlags / duration 在这里用不到
     }
 }
