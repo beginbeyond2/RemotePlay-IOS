@@ -128,15 +128,22 @@ final class RemoteClient {
 
     /// 发送 12 字节上行指令。
     /// 对应 Android 端 SendThread。
+    ///
+    /// v2.3.13 修复：撤掉 `conn.state == .ready` 检查。
+    ///
+    /// 之前 v2.2.9 加的 state check 有 bug：conn.state 由 network framework
+    /// 内部队列更新，send 时（client 队列上）可能仍是 .preparing/.setup，
+    /// 导致所有 send 被 silently skipped。Android 端没这个 check，
+    /// 直接 send。
+    ///
+    /// NWConnection.send 内部会自己处理：如果不在 ready，content 会被
+    /// 缓冲或返回 error callback。**绝不**在 client 端做 state 判断。
     func send(_ data: Data) {
         guard let conn = connection else {
             NSLog("RemoteClient send skipped: no connection")
             return
         }
-        guard conn.state == .ready else {
-            NSLog("RemoteClient send skipped: connection state=\(conn.state)")
-            return
-        }
+        NSLog("RemoteClient send: \(data.count) bytes")
         conn.send(content: data, completion: .contentProcessed { error in
             if let error {
                 NSLog("RemoteClient send error: \(error.localizedDescription)")
