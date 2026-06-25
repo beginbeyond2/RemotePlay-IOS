@@ -155,9 +155,11 @@ final class RemotePlayViewModel: ObservableObject {
         // v2.3.11：frame.type 是 4 字节大端 UInt32。
         // 示波器协议：type == 0 表示状态位 frame；type == 1 表示 H.264 video frame。
         // 兜底判断：如果 payload < 1024 字节，认为是状态位 frame（不喂 decoder）。
-        let isStateFrame = (frame.type == 0) || (frame.payload.count < 1024)
-
-        NSLog("RemotePlay: frame type=\(frame.type) len=\(frame.payload.count) isState=\(isStateFrame)")
+        // v2.3.12：撤销 v2.3.11 的 isStateFrame 过滤。
+        // Android MediaCodec 自动丢弃非 H.264 数据；iOS H264Decoder 也能
+        // 自己处理无效 frame（找不到 start code → 0 nalus → 返回）。
+        // 所以所有 frame 都喂 decoder，模仿 Android 行为。
+        NSLog("RemotePlay: frame type=\(frame.type) len=\(frame.payload.count)")
 
         // 与 Android 端位运算保持一致
         if (b >> 7) & 0x01 == 0x01 {
@@ -184,11 +186,8 @@ final class RemotePlayViewModel: ObservableObject {
             }
         }
 
-        // v2.3.11：只在 H.264 video frame 时才喂 decoder。
-        // 状态位 frame 已经更新了 runState/singleState/autoState，payload 不喂。
-        if !isStateFrame {
-            decoder?.feedAnnexB(frame.payload)
-        }
+        // v2.3.12：每个 frame 都喂 decoder（模仿 Android MediaCodec 行为）。
+        decoder?.feedAnnexB(frame.payload)
     }
 
     private func showToast(_ text: String) {
@@ -231,7 +230,12 @@ final class RemotePlayViewModel: ObservableObject {
     /// 按钮按下。
     /// 对应 Android 端 MainActivity.onTouchButtonListener / R.id.up / R.id.down
     func onButton(_ code: RemoteButtonCode) {
-        guard isConnected else { return }
+        // v2.3.12：加 NSLog 看 button press 是否真的到这里
+        NSLog("RemotePlay: onButton \(code.rawValue) isConnected=\(isConnected) client=\(client != nil)")
+        guard isConnected else {
+            NSLog("RemotePlay: onButton skipped - not connected")
+            return
+        }
         // up / down 在 Android 端是组合 clickPoint，iOS 端等价
         switch code {
         case .up:
