@@ -247,12 +247,16 @@ final class H264Decoder {
     }
 
     private func makeDecompressionSession(format: CMVideoFormatDescription) -> Bool {
-        // v2.3.8: outputCallback 期望 UnsafePointer<VTDecompressionOutputCallbackRecord>?
+        // v2.3.9: outputCallback 期望 UnsafePointer<VTDecompressionOutputCallbackRecord>?
         // Swift 把 callback + refcon 包装在 VTDecompressionOutputCallbackRecord struct 里。
         // 必须用 struct 的 init 或直接构造 record，不能直接传 @convention(c) closure。
+        // v2.3.8 用 var callbackRecord = VTDecompressionOutputCallbackRecord(...) 时
+        // 编译器报"type of expression is ambiguous"，因为 closure + optional 参数推不出类型。
+        // v2.3.9 加显式类型注解 : VTDecompressionOutputCallbackRecord。
         let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let callback: VTDecompressionOutputCallback = H264Decoder.vtOutputCallback
         var callbackRecord = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: H264Decoder.vtOutputCallback,
+            decompressionOutputCallback: callback,
             decompressionOutputRefCon: refcon
         )
 
