@@ -175,7 +175,7 @@ final class H264Decoder {
             }
         }
 
-        NSLog("H264Decoder: parsed \(nalus.count) nalus")
+        NSLog("H264Decoder: parsed \(nalus.count) nalus (input bytes=\(bytes.count), hasSPS=\(spsData != nil), hasPPS=\(ppsData != nil), hasSession=\(decompressionSession != nil))")
 
         // 第一遍：收集 SPS / PPS（v2.3.8: 显式转 Data 类型）
         for nalu in nalus {

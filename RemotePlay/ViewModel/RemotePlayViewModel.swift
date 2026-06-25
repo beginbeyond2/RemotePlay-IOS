@@ -142,8 +142,23 @@ final class RemotePlayViewModel: ObservableObject {
     }
 
     /// 处理下行帧。对应 Android 端 SocketThread.run() 中的 flags 解析与 onFrame()。
+    ///
+    /// v2.3.11 修复：区分 frame.type。
+    /// - type == 0x00：状态位 frame（payload 通常 < 100 字节，含 status bits）
+    /// - type == 0x01：H.264 视频 frame（payload 通常 > 1000 字节）
+    ///
+    /// 状态位 frame 的 payload 不是 H.264 Annex-B 格式，不能喂 decoder。
+    /// Android MediaCodec 自己丢弃非 H.264 数据，iOS 端必须手动区分。
     private func handleFrame(_ frame: IncomingFrame) {
         let b = frame.flags
+
+        // v2.3.11：frame.type 是 4 字节大端 UInt32。
+        // 示波器协议：type == 0 表示状态位 frame；type == 1 表示 H.264 video frame。
+        // 兜底判断：如果 payload < 1024 字节，认为是状态位 frame（不喂 decoder）。
+        let isStateFrame = (frame.type == 0) || (frame.payload.count < 1024)
+
+        NSLog("RemotePlay: frame type=\(frame.type) len=\(frame.payload.count) isState=\(isStateFrame)")
+
         // 与 Android 端位运算保持一致
         if (b >> 7) & 0x01 == 0x01 {
             if runState != .runOn { runState = .runOn }
@@ -169,7 +184,11 @@ final class RemotePlayViewModel: ObservableObject {
             }
         }
 
-        decoder?.feedAnnexB(frame.payload)
+        // v2.3.11：只在 H.264 video frame 时才喂 decoder。
+        // 状态位 frame 已经更新了 runState/singleState/autoState，payload 不喂。
+        if !isStateFrame {
+            decoder?.feedAnnexB(frame.payload)
+        }
     }
 
     private func showToast(_ text: String) {
