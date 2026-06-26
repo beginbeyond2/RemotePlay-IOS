@@ -36,8 +36,8 @@ final class H264Decoder {
 
     /// v2.3.18 诊断：把所有 NSLog 替换成 LogStore.shared.log
     /// 让用户在 app 内的 [DEBUG] 弹窗看到日志（绕过 iOS 沙盒）。
-    private func log(_ msg: String) {
-        LogStore.shared.log("H264Decoder: " + msg)
+    private func writeLog(_ msg: String) {
+        LogStore.shared.writeLog("H264Decoder: " + msg)
     }
 
     weak var delegate: H264DecoderDelegate?
@@ -85,18 +85,18 @@ final class H264Decoder {
     // MARK: - Private
 
     fileprivate func enqueuePixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
-        log("H264Decoder: enqueuePixelBuffer called, pts=\(presentationTime.value)/\(presentationTime.timescale)")
+        writeLog("H264Decoder: enqueuePixelBuffer called, pts=\(presentationTime.value)/\(presentationTime.timescale)")
 
         // 锁住 pixel buffer（让多线程安全使用）
         let lockStatus = CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         if lockStatus != kCVReturnSuccess {
-            log("H264Decoder: CVPixelBufferLockBaseAddress failed: \(lockStatus)")
+            writeLog("H264Decoder: CVPixelBufferLockBaseAddress failed: \(lockStatus)")
         }
 
         defer {
             let unlockStatus = CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
             if unlockStatus != kCVReturnSuccess {
-                log("H264Decoder: CVPixelBufferUnlockBaseAddress failed: \(unlockStatus)")
+                writeLog("H264Decoder: CVPixelBufferUnlockBaseAddress failed: \(unlockStatus)")
             }
         }
 
@@ -109,7 +109,7 @@ final class H264Decoder {
             formatDescriptionOut: &fmt
         )
         guard status1 == noErr, let format = fmt else {
-            log("H264Decoder: CMVideoFormatDescriptionCreateForImageBuffer failed: \(status1)")
+            writeLog("H264Decoder: CMVideoFormatDescriptionCreateForImageBuffer failed: \(status1)")
             return
         }
 
@@ -131,7 +131,7 @@ final class H264Decoder {
             sampleBufferOut: &sampleBuffer
         )
         guard status == noErr, let sb = sampleBuffer else {
-            log("H264Decoder: CMSampleBufferCreateForImageBuffer failed: \(status)")
+            writeLog("H264Decoder: CMSampleBufferCreateForImageBuffer failed: \(status)")
             return
         }
 
@@ -141,16 +141,16 @@ final class H264Decoder {
             if self.displayLayer.isReadyForMoreMediaData {
                 self.displayLayer.enqueue(sb)
                 self.displayedFrameCount += 1
-                log("H264Decoder: enqueued frame #\(self.displayedFrameCount), pts=\(presentationTime.value)/\(presentationTime.timescale), isReady=Y")
+                writeLog("H264Decoder: enqueued frame #\(self.displayedFrameCount), pts=\(presentationTime.value)/\(presentationTime.timescale), isReady=Y")
             } else {
                 self.displayLayer.flush()
                 if self.displayLayer.isReadyForMoreMediaData {
                     self.displayLayer.enqueue(sb)
                     self.displayedFrameCount += 1
-                    log("H264Decoder: enqueued after flush #\(self.displayedFrameCount)")
+                    writeLog("H264Decoder: enqueued after flush #\(self.displayedFrameCount)")
                 } else {
                     self.droppedFrameCount += 1
-                    log("H264Decoder: displayLayer still not ready, dropped frame #\(self.droppedFrameCount)")
+                    writeLog("H264Decoder: displayLayer still not ready, dropped frame #\(self.droppedFrameCount)")
                 }
             }
         }
@@ -196,29 +196,29 @@ final class H264Decoder {
             }
         }
 
-        log("H264Decoder: parsed \(nalus.count) nalus (input bytes=\(bytes.count), hasSPS=\(spsData != nil), hasPPS=\(ppsData != nil), hasSession=\(decompressionSession != nil))")
+        writeLog("H264Decoder: parsed \(nalus.count) nalus (input bytes=\(bytes.count), hasSPS=\(spsData != nil), hasPPS=\(ppsData != nil), hasSession=\(decompressionSession != nil))")
 
         // 第一遍：收集 SPS / PPS
         for nalu in nalus {
             if nalu.type == 0x07 {
                 spsData = Data(nalu.body)
-                log("H264Decoder: SPS updated, size=\(nalu.body.count)")
+                writeLog("H264Decoder: SPS updated, size=\(nalu.body.count)")
             } else if nalu.type == 0x08 {
                 ppsData = Data(nalu.body)
-                log("H264Decoder: PPS updated, size=\(nalu.body.count)")
+                writeLog("H264Decoder: PPS updated, size=\(nalu.body.count)")
             }
         }
 
         // 如有 SPS+PPS 且 session 还没建 → 建
         if let sps = spsData, let pps = ppsData, formatDescription == nil {
-            log("H264Decoder: have SPS(\(sps.count) bytes) + PPS(\(pps.count) bytes), creating session...")
+            writeLog("H264Decoder: have SPS(\(sps.count) bytes) + PPS(\(pps.count) bytes), creating session...")
             makeFormatDescription(sps: Array(sps), pps: Array(pps))
         }
 
         // 第二遍：解码 VCL NALU
         guard let fmt = formatDescription, let session = decompressionSession else {
             if !nalus.isEmpty {
-                log("H264Decoder: no session yet, dropping \(nalus.count) nalus")
+                writeLog("H264Decoder: no session yet, dropping \(nalus.count) nalus")
             }
             return
         }
@@ -255,14 +255,14 @@ final class H264Decoder {
         }
 
         guard status == noErr, let fmt = format else {
-            log("H264Decoder: format description failed: \(status)")
+            writeLog("H264Decoder: format description failed: \(status)")
             return
         }
         self.formatDescription = fmt
 
         let dims = CMVideoFormatDescriptionGetDimensions(fmt)
         let size = CGSize(width: Int(dims.width), height: Int(dims.height))
-        log("H264Decoder: video size \(Int(dims.width))x\(Int(dims.height))")
+        writeLog("H264Decoder: video size \(Int(dims.width))x\(Int(dims.height))")
 
         // 建 VTDecompressionSession
         if makeDecompressionSession(format: fmt) {
@@ -290,13 +290,13 @@ final class H264Decoder {
             decompressionSessionOut: &session
         )
         guard status == noErr, let s = session else {
-            log("H264Decoder: VTDecompressionSessionCreate failed: \(status)")
+            writeLog("H264Decoder: VTDecompressionSessionCreate failed: \(status)")
             return false
         }
         VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
         self.decompressionSession = s
-        log("H264Decoder: VTDecompressionSession created OK")
+        writeLog("H264Decoder: VTDecompressionSession created OK")
         return true
     }
 
@@ -316,7 +316,7 @@ final class H264Decoder {
             blockBufferOut: &blockBuffer
         )
         guard createStatus == kCMBlockBufferNoErr, let bb = blockBuffer else {
-            log("H264Decoder: CMBlockBufferCreate failed: \(createStatus)")
+            writeLog("H264Decoder: CMBlockBufferCreate failed: \(createStatus)")
             return
         }
 
@@ -330,7 +330,7 @@ final class H264Decoder {
             )
         }
         guard copyStatus == kCMBlockBufferNoErr else {
-            log("H264Decoder: CMBlockBufferReplaceDataBytes failed: \(copyStatus)")
+            writeLog("H264Decoder: CMBlockBufferReplaceDataBytes failed: \(copyStatus)")
             return
         }
 
@@ -354,7 +354,7 @@ final class H264Decoder {
             sampleBufferOut: &sampleBuffer
         )
         guard buildStatus == noErr, let sb = sampleBuffer else {
-            log("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus)")
+            writeLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus)")
             return
         }
 
@@ -370,7 +370,7 @@ final class H264Decoder {
             infoFlagsOut: nil
         )
         if status != noErr {
-            log("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(status)")
+            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(status)")
         }
     }
 }
@@ -382,7 +382,7 @@ extension H264Decoder {
         (refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, pts, duration) in
         guard let refcon = refcon else { return }
         guard status == noErr else {
-            log("H264Decoder: VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
+            writeLog("H264Decoder: VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
             return
         }
         guard let pb = imageBuffer else { return }

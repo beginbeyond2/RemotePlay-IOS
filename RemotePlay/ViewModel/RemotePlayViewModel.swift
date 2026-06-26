@@ -159,7 +159,7 @@ final class RemotePlayViewModel: ObservableObject {
         // Android MediaCodec 自动丢弃非 H.264 数据；iOS H264Decoder 也能
         // 自己处理无效 frame（找不到 start code → 0 nalus → 返回）。
         // 所以所有 frame 都喂 decoder，模仿 Android 行为。
-        log("RemotePlay: frame type=\(frame.type) len=\(frame.payload.count)")
+        writeLog("RemotePlay: frame type=\(frame.type) len=\(frame.payload.count)")
 
         // 与 Android 端位运算保持一致
         if (b >> 7) & 0x01 == 0x01 {
@@ -231,9 +231,9 @@ final class RemotePlayViewModel: ObservableObject {
     /// 对应 Android 端 MainActivity.onTouchButtonListener / R.id.up / R.id.down
     func onButton(_ code: RemoteButtonCode) {
         // v2.3.12：加 NSLog 看 button press 是否真的到这里
-        log("RemotePlay: onButton \(code.rawValue) isConnected=\(isConnected) client=\(client != nil)")
+        writeLog("RemotePlay: onButton \(code.rawValue) isConnected=\(isConnected) client=\(client != nil)")
         guard isConnected else {
-            log("RemotePlay: onButton skipped - not connected")
+            writeLog("RemotePlay: onButton skipped - not connected")
             return
         }
         // up / down 在 Android 端是组合 clickPoint，iOS 端等价
