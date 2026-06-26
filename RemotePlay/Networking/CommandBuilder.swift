@@ -11,8 +11,8 @@
 //    [2-3] reserved  0x00
 //    [4-7] argA      小端 int：
 //                    - 触摸事件：x 坐标
-//                    - 按钮事件：按钮编码（run=0x08, single=0x09, auto=0x30,
-//                                         half=0x31, home=0x61, up=0x51）
+//                    - 按钮事件：buttons_id (b[4]=按钮 ID, b[7]=0x01 固定)
+//                              ←  注意：Android 端 b[7]=0x01 不是 0x00
 //    [8-11] argB     小端 int：
 //                    - 触摸事件：y 坐标
 //                    - 按钮事件：0x01=按下 / 0x00=抬起
@@ -52,18 +52,27 @@ enum CommandBuilder {
     ///   - code: 按钮编码（与 Android 端 byte[4] 一致）
     ///   - pressDown: true=按下 / false=抬起
     ///
-    /// v2.3.14 修复：按钮编码写到 `data[4]`，不是 `data[7]`。
+    /// v2.3.15 修复：button 事件的 byte[4..7] 必须是 `[code, 0x00, 0x00, 0x01]`，
+    /// 不是 `[code, 0x00, 0x00, 0x00]`。
     ///
-    /// Android 端（MainActivity.java:411）：
+    /// Android 端 MainActivity.java:399-402：
     /// ```java
-    /// case R.id.run:
-    ///     b[4] = 0x08;     // ← 只设 byte[4]
-    ///     break;
+    /// b[4] = 0x00;
+    /// b[5] = 0x00;
+    /// b[6] = 0x00;
+    /// b[7] = 0x01;   // ← b[7] 固定 = 0x01
     /// ```
-    /// Android `b[4..7] = [0x08, 0x00, 0x00, 0x00]` → LE int32 = 8。
+    /// 然后 switch 设置 `b[4] = 0x08` (RUN) 等。
     ///
-    /// v2.3.13 之前 iOS 把 code 写到 `data[7]`，导致 `b[4..7] = [0x00, 0x00, 0x00, 0x08]`
-    /// → LE int32 = 134,217,728。示波器按 b[4] 取按钮 ID 收到 0x00 → 全部按钮失效。
+    /// 结果 LE int32 = `code + 0x01000000`，例如：
+    /// - RUN  : 0x01000008 = 16,777,224
+    /// - SEQ  : 0x01000009
+    /// - AUTO : 0x01000030
+    /// - 50%  : 0x01000031
+    /// - HOME : 0x01000061
+    ///
+    /// v2.3.14 修复时我把 b[7] 设成 0x00 → LE int32 = code → 示波器仍不识别。
+    /// v2.3.15 修正：b[7] = 0x01。
     static func button(code: UInt8, pressDown: Bool) -> Data {
         var data = Data(count: 12)
         data[0] = kCmdButton
@@ -73,7 +82,7 @@ enum CommandBuilder {
         data[4] = code
         data[5] = 0x00
         data[6] = 0x00
-        data[7] = 0x00
+        data[7] = 0x01   // ← 必须 0x01，不是 0x00！
         data[8] = 0x00
         data[9] = 0x00
         data[10] = 0x00
