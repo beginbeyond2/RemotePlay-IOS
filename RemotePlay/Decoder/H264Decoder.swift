@@ -2,29 +2,20 @@
 //  H264Decoder.swift
 //  RemotePlay
 //
-//  v2.3.8 重写：使用 VideoToolbox 硬解 H.264（VTDecompressionSession），
-//  拿到 CVPixelBuffer 后用 CMSampleBufferCreateForImageBuffer 构造
-//  iOS 18+ 合规的 sample buffer，enqueue 到 AVSampleBufferDisplayLayer。
+//  v2.3.16 视频黑屏修复：
+//    1) `nalUnitHeaderLength: 4` → `1`（Annex-B 格式参数集）
+//    2) 去掉多余的 `CMVideoFormatDescriptionCreateForImageBuffer`
+//       直接传 nil 给 `CMSampleBufferCreateForImageBuffer`（自动提取 format）
+//    3) `CVPixelBufferLockBaseAddress` / `UnlockBaseAddress` 锁住 pixel buffer
+//    4) 加大量 NSLog 让远程诊断可以定位问题
 //
 //  对应 Android 端：
 //    mMediaCodec = MediaCodec.createDecoderByType("video/avc");
-//    mMediaCodec.configure(mediaFormat, surface, null, 0);
+//    mMediaCodec.configure(mediaFormat, surface, null, 0);   // surface mode
 //    mMediaCodec.start();
-//    mMediaCodec.queueInputBuffer(...);
-//    mMediaCodec.dequeueOutputBuffer(...);
-//
-//  v2.3.7 编译错误原因：
-//    1) `outputCallback:` 期望 UnsafePointer<VTDecompressionOutputCallbackRecord>?
-//       （不是 @convention(c) function pointer）。Swift 在 VideoToolbox SDK 里把
-//       callback 包装成 VTDecompressionOutputCallbackRecord struct（含 function
-//       pointer + refcon）。v2.3.7 直接传 closure 类型，编译失败。
-//    2) spsData/ppsData 是 Data?，nalu.body 是 [UInt8]，不能直接赋值。
-//    3) paramSetPtr.baseAddress 是 UnsafePointer? 可选，需要 force unwrap。
-//
-//  v2.3.8 修复：
-//    1) 用 VTDecompressionOutputCallbackRecord struct 包装 callback + refcon。
-//    2) 显式 Data(nalu.body) 转换。
-//    3) baseAddress! force unwrap。
+//    mMediaCodec.queueInputBuffer(...);                       // 喂 H.264 帧
+//    mMediaCodec.dequeueOutputBuffer(...);                    // 取解码结果
+//    mMediaCodec.releaseOutputBuffer(idx, true);              // 渲染到 surface
 //
 
 import Foundation
@@ -48,6 +39,8 @@ final class H264Decoder {
     private var ppsData: Data?
     private let decodeQueue = DispatchQueue(label: "com.micsig.tbook.remoteplay.h264decoder")
     private var frameIndex: UInt64 = 0
+    private var displayedFrameCount: UInt64 = 0
+    private var droppedFrameCount: UInt64 = 0
     private let pixelBufferAttrs: [String: Any] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferIOSurfacePropertiesKey as String: [:]
@@ -82,54 +75,60 @@ final class H264Decoder {
     // MARK: - Private
 
     fileprivate func enqueuePixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
-        // 用 pixel buffer 构造 CMVideoFormatDescription
-        var fmt: CMVideoFormatDescription?
-        let status1 = CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescriptionOut: &fmt
-        )
-        guard status1 == noErr, let format = fmt else {
-            NSLog("H264Decoder: CMVideoFormatDescriptionCreateForImageBuffer failed: \(status1)")
-            return
+        NSLog("H264Decoder: enqueuePixelBuffer called, pts=\(presentationTime.value)/\(presentationTime.timescale)")
+
+        // 锁住 pixel buffer（让多线程安全使用）
+        let lockStatus = CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        if lockStatus != kCVReturnSuccess {
+            NSLog("H264Decoder: CVPixelBufferLockBaseAddress failed: \(lockStatus)")
         }
 
-        // 用 pixel buffer 构造 CMSampleBuffer（iOS 18+ 合规形式）
+        defer {
+            let unlockStatus = CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+            if unlockStatus != kCVReturnSuccess {
+                NSLog("H264Decoder: CVPixelBufferUnlockBaseAddress failed: \(unlockStatus)")
+            }
+        }
+
+        // 直接用 CMSampleBufferCreateForImageBuffer，formatDescription 传 nil 让其自动从 image buffer 提取
         var sampleBuffer: CMSampleBuffer?
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 25),
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: .invalid
         )
-        let status2 = CMSampleBufferCreateForImageBuffer(
+        let status = CMSampleBufferCreateForImageBuffer(
             allocator: kCFAllocatorDefault,
             imageBuffer: pixelBuffer,
             dataReady: true,
             makeDataReadyCallback: nil,
             refcon: nil,
-            formatDescription: format,
+            formatDescription: nil,   // ← 自动从 image buffer 提取
             sampleTiming: &timing,
             sampleBufferOut: &sampleBuffer
         )
-        guard status2 == noErr, let sb = sampleBuffer else {
-            NSLog("H264Decoder: CMSampleBufferCreateForImageBuffer failed: \(status2)")
+        guard status == noErr, let sb = sampleBuffer else {
+            NSLog("H264Decoder: CMSampleBufferCreateForImageBuffer failed: \(status)")
             return
         }
-
-        // 标记数据 ready
-        CMSampleBufferMakeDataReady(sb)
 
         // 投递到主线程 enqueue
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             if self.displayLayer.isReadyForMoreMediaData {
                 self.displayLayer.enqueue(sb)
+                self.displayedFrameCount += 1
+                NSLog("H264Decoder: enqueued frame #\(self.displayedFrameCount), pts=\(presentationTime.value)/\(presentationTime.timescale), isReady=Y")
             } else {
+                // Layer 不 ready，flush + 重试
                 self.displayLayer.flush()
                 if self.displayLayer.isReadyForMoreMediaData {
                     self.displayLayer.enqueue(sb)
+                    self.displayedFrameCount += 1
+                    NSLog("H264Decoder: enqueued after flush #\(self.displayedFrameCount)")
                 } else {
-                    NSLog("H264Decoder: displayLayer still not ready, dropping frame")
+                    self.droppedFrameCount += 1
+                    NSLog("H264Decoder: displayLayer still not ready, dropped frame #\(self.droppedFrameCount)")
                 }
             }
         }
@@ -177,23 +176,28 @@ final class H264Decoder {
 
         NSLog("H264Decoder: parsed \(nalus.count) nalus (input bytes=\(bytes.count), hasSPS=\(spsData != nil), hasPPS=\(ppsData != nil), hasSession=\(decompressionSession != nil))")
 
-        // 第一遍：收集 SPS / PPS（v2.3.8: 显式转 Data 类型）
+        // 第一遍：收集 SPS / PPS
         for nalu in nalus {
             if nalu.type == 0x07 {
                 spsData = Data(nalu.body)
+                NSLog("H264Decoder: SPS updated, size=\(nalu.body.count)")
             } else if nalu.type == 0x08 {
                 ppsData = Data(nalu.body)
+                NSLog("H264Decoder: PPS updated, size=\(nalu.body.count)")
             }
         }
 
-        // 如有 SPS+PPS 且 session 还没建 → 建（v2.3.8: 转 [UInt8] 给 makeFormatDescription）
+        // 如有 SPS+PPS 且 session 还没建 → 建
         if let sps = spsData, let pps = ppsData, formatDescription == nil {
+            NSLog("H264Decoder: have SPS(\(sps.count) bytes) + PPS(\(pps.count) bytes), creating session...")
             makeFormatDescription(sps: Array(sps), pps: Array(pps))
         }
 
         // 第二遍：解码 VCL NALU
         guard let fmt = formatDescription, let session = decompressionSession else {
-            NSLog("H264Decoder: no session yet, dropping VCL nalus")
+            if !nalus.isEmpty {
+                NSLog("H264Decoder: no session yet, dropping \(nalus.count) nalus")
+            }
             return
         }
         for nalu in nalus where nalu.type != 0x07 && nalu.type != 0x08 {
@@ -204,8 +208,9 @@ final class H264Decoder {
     private func makeFormatDescription(sps: [UInt8], pps: [UInt8]) {
         var format: CMVideoFormatDescription?
 
-        // 用 &-operator（Swift 5.5+ 自动转 UnsafePointer），不用 withUnsafeMutablePointer
-        // 关键：parameterSetPointers 只传一次
+        // v2.3.16 修复：参数集是 Annex-B 格式（无 4 字节 length prefix），
+        // 应该传 nalUnitHeaderLength: 1（1 字节 NALU type header）。
+        // 之前 v2.3.0 ~ v2.3.15 传 4 是 AVCC 格式值，导致 format description 构造失败。
         let status = sps.withUnsafeBufferPointer { spsPtr -> OSStatus in
             pps.withUnsafeBufferPointer { ppsPtr -> OSStatus in
                 let paramSet: [UnsafePointer<UInt8>] = [
@@ -220,7 +225,7 @@ final class H264Decoder {
                             parameterSetCount: 2,
                             parameterSetPointers: paramSetPtr.baseAddress!,
                             parameterSetSizes: paramSizesPtr.baseAddress!,
-                            nalUnitHeaderLength: 4,
+                            nalUnitHeaderLength: 1,  // ← Annex-B 格式：1 字节 NALU type header
                             formatDescriptionOut: &format
                         )
                     }
@@ -247,12 +252,6 @@ final class H264Decoder {
     }
 
     private func makeDecompressionSession(format: CMVideoFormatDescription) -> Bool {
-        // v2.3.9: outputCallback 期望 UnsafePointer<VTDecompressionOutputCallbackRecord>?
-        // Swift 把 callback + refcon 包装在 VTDecompressionOutputCallbackRecord struct 里。
-        // 必须用 struct 的 init 或直接构造 record，不能直接传 @convention(c) closure。
-        // v2.3.8 用 var callbackRecord = VTDecompressionOutputCallbackRecord(...) 时
-        // 编译器报"type of expression is ambiguous"，因为 closure + optional 参数推不出类型。
-        // v2.3.9 加显式类型注解 : VTDecompressionOutputCallbackRecord。
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let callback: VTDecompressionOutputCallback = H264Decoder.vtOutputCallback
         var callbackRecord = VTDecompressionOutputCallbackRecord(
@@ -315,7 +314,6 @@ final class H264Decoder {
         }
 
         // 包成 CMSampleBuffer（送进 VTDecompressionSession）
-        // 用 &-operator 写法（Swift 5.5+ 自动 inout -> UnsafePointer 转换）
         var sampleBuffer: CMSampleBuffer?
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
@@ -342,8 +340,6 @@ final class H264Decoder {
         frameIndex &+= 1
 
         // 提交到 VTDecompressionSession 解码
-        // 用同步版本（不带 closure），callback 已在 session 创建时指定
-        // 通过 frameRefcon 把 self 传给 callback
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let status = VTDecompressionSessionDecodeFrame(
             session,
@@ -358,36 +354,18 @@ final class H264Decoder {
     }
 }
 
-// v2.3.10：把 extension 放在 class 声明之后。
 // 静态 @convention(c) 回调：VTDecompressionSession 的解码完成 callback。
-//
-// Apple SDK 中 VTDecompressionOutputCallback 的真实签名是 7 参数：
-//   (
-//     UnsafeMutableRawPointer?,    // decompressionOutputRefCon
-//     UnsafeMutableRawPointer?,    // sourceFrameRefCon
-//     OSStatus,                    // status
-//     VTDecodeInfoFlags,           // infoFlags  (UInt32 的 typealias)
-//     CVImageBuffer?,              // imageBuffer
-//     CMTime,                      // presentationTimeStamp
-//     CMTime                       // presentationDuration
-//   ) -> Void
-//
-// v2.3.7 ~ v2.3.9 都用了 6 参数 closure，漏了 sourceFrameRefCon，
-// 导致 "cannot convert ... to specified type 'VTDecompressionOutputCallback'" 错误。
-//
-// v2.3.10 直接用 SDK 的 typealias VTDecompressionOutputCallback 作显式类型，
-// 这样编译器会用 SDK 真实签名（7 参数），不会再因 type 不匹配报错。
+// Apple SDK 中 VTDecompressionOutputCallback 的真实签名是 7 参数。
 extension H264Decoder {
     static let vtOutputCallback: VTDecompressionOutputCallback = {
         (refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, pts, duration) in
         guard let refcon = refcon else { return }
         guard status == noErr else {
-            NSLog("H264Decoder: VT callback status=\(status)")
+            NSLog("H264Decoder: VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
             return
         }
         guard let pb = imageBuffer else { return }
         let decoder = Unmanaged<H264Decoder>.fromOpaque(refcon).takeUnretainedValue()
         decoder.enqueuePixelBuffer(pb, presentationTime: pts)
-        // 注：sourceFrameRefCon / infoFlags / duration 在这里用不到
     }
 }
