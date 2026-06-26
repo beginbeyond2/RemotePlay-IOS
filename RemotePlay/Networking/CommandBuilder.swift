@@ -17,6 +17,7 @@
 //                    - 触摸事件：y 坐标
 //                    - 按钮事件：0x01=按下 / 0x00=抬起
 //
+//
 
 import Foundation
 
@@ -50,16 +51,29 @@ enum CommandBuilder {
     /// - Parameters:
     ///   - code: 按钮编码（与 Android 端 byte[4] 一致）
     ///   - pressDown: true=按下 / false=抬起
+    ///
+    /// v2.3.14 修复：按钮编码写到 `data[4]`，不是 `data[7]`。
+    ///
+    /// Android 端（MainActivity.java:411）：
+    /// ```java
+    /// case R.id.run:
+    ///     b[4] = 0x08;     // ← 只设 byte[4]
+    ///     break;
+    /// ```
+    /// Android `b[4..7] = [0x08, 0x00, 0x00, 0x00]` → LE int32 = 8。
+    ///
+    /// v2.3.13 之前 iOS 把 code 写到 `data[7]`，导致 `b[4..7] = [0x00, 0x00, 0x00, 0x08]`
+    /// → LE int32 = 134,217,728。示波器按 b[4] 取按钮 ID 收到 0x00 → 全部按钮失效。
     static func button(code: UInt8, pressDown: Bool) -> Data {
         var data = Data(count: 12)
         data[0] = kCmdButton
         data[1] = 0x00
         data[2] = 0x00
         data[3] = 0x00
-        data[4] = 0x00
+        data[4] = code
         data[5] = 0x00
         data[6] = 0x00
-        data[7] = code
+        data[7] = 0x00
         data[8] = 0x00
         data[9] = 0x00
         data[10] = 0x00
