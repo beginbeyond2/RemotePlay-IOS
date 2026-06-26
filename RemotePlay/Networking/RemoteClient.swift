@@ -37,7 +37,7 @@ enum RemoteClientState: Equatable {
 /// 远程示波器 TCP 客户端。
 final class RemoteClient {
 
-    private func writeLog(_ msg: String) { LogStore.shared.writeLog(msg) }
+    private func writeLog(_ msg: String) { LogStore.shared.log(msg) }
     typealias FrameHandler = (IncomingFrame) -> Void
     typealias StateHandler = (RemoteClientState) -> Void
 
@@ -148,7 +148,7 @@ final class RemoteClient {
         writeLog("RemoteClient send: \(data.count) bytes")
         conn.send(content: data, completion: .contentProcessed { error in
             if let error {
-                writeLog("RemoteClient send error: \(error.localizedDescription)")
+                self.writeLog("RemoteClient send error: \(error.localizedDescription)")
             }
         })
     }

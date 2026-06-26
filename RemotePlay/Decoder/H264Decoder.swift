@@ -37,7 +37,7 @@ final class H264Decoder {
     /// v2.3.18 诊断：把所有 NSLog 替换成 LogStore.shared.log
     /// 让用户在 app 内的 [DEBUG] 弹窗看到日志（绕过 iOS 沙盒）。
     private func writeLog(_ msg: String) {
-        LogStore.shared.writeLog("H264Decoder: " + msg)
+        LogStore.shared.log("H264Decoder: " + msg)
     }
 
     weak var delegate: H264DecoderDelegate?
@@ -382,7 +382,7 @@ extension H264Decoder {
         (refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, pts, duration) in
         guard let refcon = refcon else { return }
         guard status == noErr else {
-            writeLog("H264Decoder: VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
+            LogStore.shared.log("H264Decoder: VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
             return
         }
         guard let pb = imageBuffer else { return }

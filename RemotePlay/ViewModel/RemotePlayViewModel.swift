@@ -39,6 +39,8 @@ struct IndicatorState: Equatable {
 @MainActor
 final class RemotePlayViewModel: ObservableObject {
 
+    private func writeLog(_ msg: String) { LogStore.shared.log(msg) }
+
     // MARK: - Published state
 
     @Published private(set) var isConnected: Bool = false
