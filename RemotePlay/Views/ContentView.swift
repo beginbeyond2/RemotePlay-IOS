@@ -29,6 +29,8 @@ extension View {
 
 struct ContentView: View {
     @EnvironmentObject private var viewModel: RemotePlayViewModel
+    @StateObject private var logStore = LogStore.shared
+    @State private var showLogSheet = false
 
     var body: some View {
         GeometryReader { geo in
@@ -52,6 +54,10 @@ struct ContentView: View {
         }
         .onDisappear {
             viewModel.stop()
+        }
+        .sheet(isPresented: $showLogSheet) {
+            LogSheetView()
+                .environmentObject(logStore)
         }
     }
 
@@ -82,6 +88,22 @@ struct ContentView: View {
                             .foregroundColor(.white)
                             .padding(.top, 24)
                     }
+                    HStack {
+                        // v2.3.18: [DEBUG] 按钮，显示 LogStore 日志
+                        Button {
+                            showLogSheet = true
+                        } label: {
+                            Text("DEBUG")
+                                .font(.caption.weight(.bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .foregroundColor(.white)
+                        }
+                        .padding(.top, 8)
+                        .padding(.leading, 12)
+                        Spacer()
+                    }
                     Spacer()
                 }
             }
@@ -97,6 +119,64 @@ struct ContentView: View {
                 viewModel.updateSurfaceSize(newSize)
             }
         }
+    }
+}
+
+/// v2.3.18: 日志显示弹窗
+struct LogSheetView: View {
+    @EnvironmentObject private var logStore: LogStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(logStore.lines.enumerated()), id: \.offset) { (idx, line) in
+                            Text(line)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(colorFor(line))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .id(idx)
+                        }
+                    }
+                }
+                .background(Color.black)
+                .onChangeCompat(of: logStore.lines.count) { _ in
+                    if let last = logStore.lines.indices.last {
+                        withAnimation { proxy.scrollTo(last, anchor: .bottom) }
+                    }
+                }
+            }
+            .navigationTitle("DEBUG LOG (\(logStore.lines.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Clear") { logStore.clear() }
+                        .foregroundColor(.white)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Close") { dismiss() }
+                        .foregroundColor(.white)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func colorFor(_ line: String) -> Color {
+        if line.contains("failed") || line.contains("error") || line.contains("Error") {
+            return .red
+        }
+        if line.contains("created OK") || line.contains("enqueued") {
+            return .green
+        }
+        if line.contains("skipped") {
+            return .yellow
+        }
+        return .gray
     }
 }
 
