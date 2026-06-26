@@ -2,20 +2,24 @@
 //  H264Decoder.swift
 //  RemotePlay
 //
-//  v2.3.16 视频黑屏修复：
+//  v2.3.17 修复 v2.3.16 编译错误：
+//    - `CMSampleBufferCreateForImageBuffer` 的 `formatDescription` 参数
+//      不能传 nil（Apple API 强制要求有效 CMVideoFormatDescription）。
+//    - 必须先用 `CMVideoFormatDescriptionCreateForImageBuffer` 构造 format。
+//    - v2.3.7 用过这个写法，是对的；v2.3.16 改 nil 是错的。
+//
+//  v2.3.16 修复（保留）：
 //    1) `nalUnitHeaderLength: 4` → `1`（Annex-B 格式参数集）
-//    2) 去掉多余的 `CMVideoFormatDescriptionCreateForImageBuffer`
-//       直接传 nil 给 `CMSampleBufferCreateForImageBuffer`（自动提取 format）
-//    3) `CVPixelBufferLockBaseAddress` / `UnlockBaseAddress` 锁住 pixel buffer
-//    4) 加大量 NSLog 让远程诊断可以定位问题
+//    2) `CVPixelBufferLockBaseAddress` / `UnlockBaseAddress` 锁住 pixel buffer
+//    3) 加大量 NSLog 让远程诊断可以定位问题
 //
 //  对应 Android 端：
 //    mMediaCodec = MediaCodec.createDecoderByType("video/avc");
 //    mMediaCodec.configure(mediaFormat, surface, null, 0);   // surface mode
 //    mMediaCodec.start();
-//    mMediaCodec.queueInputBuffer(...);                       // 喂 H.264 帧
-//    mMediaCodec.dequeueOutputBuffer(...);                    // 取解码结果
-//    mMediaCodec.releaseOutputBuffer(idx, true);              // 渲染到 surface
+//    mMediaCodec.queueInputBuffer(...);
+//    mMediaCodec.dequeueOutputBuffer(...);
+//    mMediaCodec.releaseOutputBuffer(idx, true);
 //
 
 import Foundation
@@ -90,7 +94,20 @@ final class H264Decoder {
             }
         }
 
-        // 直接用 CMSampleBufferCreateForImageBuffer，formatDescription 传 nil 让其自动从 image buffer 提取
+        // v2.3.17：先用 pixel buffer 构造 CMVideoFormatDescription
+        // （v2.3.16 直接传 nil 给 CMSampleBufferCreateForImageBuffer 编译失败）
+        var fmt: CMVideoFormatDescription?
+        let status1 = CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &fmt
+        )
+        guard status1 == noErr, let format = fmt else {
+            NSLog("H264Decoder: CMVideoFormatDescriptionCreateForImageBuffer failed: \(status1)")
+            return
+        }
+
+        // 构造 sample buffer
         var sampleBuffer: CMSampleBuffer?
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 25),
@@ -103,7 +120,7 @@ final class H264Decoder {
             dataReady: true,
             makeDataReadyCallback: nil,
             refcon: nil,
-            formatDescription: nil,   // ← 自动从 image buffer 提取
+            formatDescription: format,  // ← v2.3.17：用 format，不是 nil
             sampleTiming: &timing,
             sampleBufferOut: &sampleBuffer
         )
@@ -120,7 +137,6 @@ final class H264Decoder {
                 self.displayedFrameCount += 1
                 NSLog("H264Decoder: enqueued frame #\(self.displayedFrameCount), pts=\(presentationTime.value)/\(presentationTime.timescale), isReady=Y")
             } else {
-                // Layer 不 ready，flush + 重试
                 self.displayLayer.flush()
                 if self.displayLayer.isReadyForMoreMediaData {
                     self.displayLayer.enqueue(sb)
@@ -210,7 +226,6 @@ final class H264Decoder {
 
         // v2.3.16 修复：参数集是 Annex-B 格式（无 4 字节 length prefix），
         // 应该传 nalUnitHeaderLength: 1（1 字节 NALU type header）。
-        // 之前 v2.3.0 ~ v2.3.15 传 4 是 AVCC 格式值，导致 format description 构造失败。
         let status = sps.withUnsafeBufferPointer { spsPtr -> OSStatus in
             pps.withUnsafeBufferPointer { ppsPtr -> OSStatus in
                 let paramSet: [UnsafePointer<UInt8>] = [
