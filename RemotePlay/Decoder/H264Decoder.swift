@@ -290,16 +290,17 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
-        // v2.3.31 修复：v2.3.30 用 VTSessionSetProperty(UsingHardwareAcceleratedVideoDecoder)
-        // 在 iOS 17+ SDK 中编译失败。改用 if #available 包裹 iOS 17+ 的 decoderSpecification。
+        // v2.3.44 修复：v2.3.27 ~ v2.3.43 用 hardware-forced decoder，
+        // 用户日志显示 -12909 持续触发。iOS 26 hardware decoder 可能拒绝 800x600 Baseline H.264。
+        // 改用 software decoder (EnableHardwareAcceleratedVideoDecoder = false)。
         let decoderSpec: CFDictionary?
         if #available(iOS 17.0, *) {
             let spec: [String: Any] = [
-                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
+                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: false
             ]
             decoderSpec = spec as CFDictionary
         } else {
-            decoderSpec = nil
+            decoderSpec = nil  // iOS 16 默认是 software decoder
         }
 
         var session: VTDecompressionSession?
@@ -323,7 +324,8 @@ final class H264Decoder {
         }
 
         self.decompressionSession = s
-        let hwMode = decoderSpec == nil ? "default" : "hardware-forced"
+        // v2.3.44: hwMode = decoderSpec == nil → "default", contains EnableHardwareAcceleratedVideoDecoder:false → "software"
+        let hwMode = decoderSpec == nil ? "default" : "software-forced"
         writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1, hw=\(hwMode))")
         return true
     }
@@ -364,17 +366,18 @@ final class H264Decoder {
 
         frameIndex &+= 1
 
-        // v2.3.43 修复：用户日志显示 -12909 持续触发。根因是
-        // duration: CMTime(value: 0, timescale: 1) 是 zero duration，
-        // iOS 26 hardware decoder 明确拒绝。
-        // 改回 v2.3.27 的 valid duration: CMTime(value: 3600, timescale: 90000)
-        // = 1/25 秒（valid 非零非 invalid 非 indefinite）。
+        // v2.3.44 修复：v2.3.43 改回 duration: CMTime(3600, 90000) = 1/25 秒 仍 -12909。
+        // 说明 duration 不是唯一根因。iOS 26 hardware decoder 对 800x600 Baseline H.264
+        // 可能拒绝。改 3 个东西一起：
+        //   1. duration 改 1/30 秒 (3000/90000, NTSC 标准 frame interval)
+        //   2. decoderSpec 改 software decoder (hardware-forced 失败)
+        //   3. CMSampleBufferCreate + MakeDataReady 完整形式
         let ptsValue = CMTimeValue(frameIndex)
-        let pts = CMTime(value: ptsValue * 3600, timescale: 90000)
+        let pts = CMTime(value: ptsValue * 3000, timescale: 90000)  // 1/30 秒
         let dts = pts
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
-            duration: CMTime(value: 3600, timescale: 90000),
+            duration: CMTime(value: 3000, timescale: 90000),  // 1/30 秒
             presentationTimeStamp: pts,
             decodeTimeStamp: dts
         )
