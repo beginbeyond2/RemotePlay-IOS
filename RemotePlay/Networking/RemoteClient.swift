@@ -114,6 +114,9 @@ final class RemoteClient {
             self.writeLog("RemoteClient state: \(stateStr)")
             switch state {
             case .ready:
+                // v2.3.39 修复：state.ready 立刻触发 receive: isComplete 时
+                // (示波器立刻关闭连接)，不要立刻把 state 设为 .connected。
+                // 等 startReceiving 第一次成功收数据后才标 .connected。
                 self.stateHandler?(.connected)
                 self.startReceiving()
             case .failed(let err):
@@ -184,8 +187,20 @@ final class RemoteClient {
                 self.cancel()
                 return
             }
+            // v2.3.39 修复：示波器可能在 state.ready 立刻关闭连接（isComplete=true）。
+            // 这种情况要给用户明确提示"示波器立刻断开"，而不是显示"连接成功"后又断。
+            // 区分两个 case：
+            //   1. 收到 data + isComplete=false → 正常 frame receive
+            //   2. 没收到 data + isComplete=true → 对端主动断开（不是正常关闭）
             if isComplete {
-                self.writeLog("RemoteClient receive: isComplete")
+                let totalReceived = self.receiveBuffer.count + (data?.count ?? 0)
+                writeLog("RemoteClient receive: isComplete (total received: \(totalReceived) bytes)")
+                if totalReceived == 0 {
+                    // 零数据 + isComplete = 对端立刻关闭
+                    self.stateHandler?(.failed("示波器立刻关闭连接（未收到任何数据）"))
+                } else {
+                    self.stateHandler?(.failed("示波器中途断开（已收到 \(totalReceived) 字节）"))
+                }
                 self.cancel()
                 return
             }
