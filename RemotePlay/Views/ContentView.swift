@@ -123,7 +123,7 @@ struct ContentView: View {
 }
 
 /// v2.3.18: 日志显示弹窗
-/// v2.3.35: 重写为 VStack，不依赖 navigationBar toolbar（iOS 26 toolbar 不可靠），
+/// v2.3.38: 重写为 VStack，不依赖 navigationBar toolbar（iOS 26 toolbar 不可靠），
 /// 让 Copy 按钮绝对可见。
 struct LogSheetView: View {
     @EnvironmentObject private var logStore: LogStore
@@ -193,7 +193,7 @@ struct LogSheetView: View {
                     }
                 }
             }
-            .navigationTitle("DEBUG LOG (v2.3.35 · \(logStore.lines.count))")
+            .navigationTitle("DEBUG LOG (v2.3.38 · \(logStore.lines.count))")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
