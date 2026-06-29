@@ -301,12 +301,10 @@ final class H264Decoder {
             return false
         }
         VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-        // v2.3.24: iOS 26 需要明确的 thread count，否则可能 decode 失败
-        if let threadCount = CFNumberCreate(kCFAllocatorDefault, .intType, [1] as CFArray) {
-            VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_ThreadCount, value: threadCount)
-        }
-        if let propNumber = CFNumberCreate(kCFAllocatorDefault, .intType, [1] as CFArray) {
-            VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_FieldMode, value: kCFBooleanFalse)
+        // v2.3.25 修复：CFNumberCreate 第 3 参数是 UnsafeRawPointer?，传 &intValue
+        var threadCount: Int32 = 1
+        if let cfThreadCount = CFNumberCreate(kCFAllocatorDefault, .intType, &threadCount) {
+            VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_ThreadCount, value: cfThreadCount)
         }
 
         self.decompressionSession = s
@@ -379,23 +377,24 @@ final class H264Decoder {
             return
         }
 
-        // v2.3.24 改用 async closure API（iOS 9+，更稳定，不需 frameRefcon）
+        // v2.3.25 改用 async closure API（iOS 9+，更稳定，不需 frameRefcon）
+        // 注意：Xcode 15 SDK 中此 API 是位置参数（不是 labeled）
         let capturedPts = frameIndex
         VTDecompressionSessionDecodeFrameWithOutputHandler(
             session,
-            sampleBuffer: sb,
-            flags: [],
-            outputHandler: { [weak self] status, infoFlags, imageBuffer, outPTS, duration in
-                if status != noErr {
-                    LogStore.shared.log("H264Decoder: async decode status=\(status) pts=\(capturedPts) infoFlags=\(infoFlags.rawValue)")
-                    return
-                }
-                guard let ib = imageBuffer else { return }
-                DispatchQueue.main.async {
-                    self?.enqueuePixelBuffer(ib, presentationTime: outPTS)
-                }
+            sb,
+            [],
+            nil
+        ) { [weak self] status, infoFlags, imageBuffer, outPTS, duration in
+            if status != noErr {
+                LogStore.shared.log("H264Decoder: async decode status=\(status) pts=\(capturedPts) infoFlags=\(infoFlags.rawValue)")
+                return
             }
-        )
+            guard let ib = imageBuffer else { return }
+            DispatchQueue.main.async {
+                self?.enqueuePixelBuffer(ib, presentationTime: outPTS)
+            }
+        }
     }
 }
 
