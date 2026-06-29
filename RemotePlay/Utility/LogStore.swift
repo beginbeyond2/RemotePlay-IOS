@@ -24,7 +24,9 @@ final class LogStore: ObservableObject {
     static let shared = LogStore()
 
     @Published private(set) var lines: [String] = []
-    private let maxLines = 500
+    // v2.3.33 修复：容量 500 → 4000，让 video frame 解析日志不被刷掉。
+    // iOS 26 + 25 fps + RemoteClient 12-byte send 频繁出现，500 行 8 秒就满。
+    private let maxLines = 4000
     private let fileURL: URL?
     private let dateFormatter: DateFormatter
 
@@ -77,6 +79,17 @@ final class LogStore: ObservableObject {
     /// 清除内存中的日志（不清文件）。
     func clear() {
         lines.removeAll()
+    }
+
+    /// v2.3.33：返回所有日志行（用换行符连接），方便一键复制。
+    func dumpAll() -> String {
+        return lines.joined(separator: "\n")
+    }
+
+    /// v2.3.33：返回日志文件 URL（Documents/RemotePlay-log.txt）。
+    /// 用户可用 3uTools 文件共享导出。
+    nonisolated func getFileURL() -> URL? {
+        return fileURL
     }
 
     private func append(_ line: String) {

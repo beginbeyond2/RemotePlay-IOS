@@ -126,6 +126,7 @@ struct ContentView: View {
 struct LogSheetView: View {
     @EnvironmentObject private var logStore: LogStore
     @Environment(\.dismiss) private var dismiss
+    @State private var showCopiedToast = false
 
     var body: some View {
         NavigationStack {
@@ -157,9 +158,28 @@ struct LogSheetView: View {
                     Button("Clear") { logStore.clear() }
                         .foregroundColor(.white)
                 }
+                // v2.3.33：加 Copy 按钮，把所有日志复制到剪贴板
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Copy") {
+                        UIPasteboard.general.string = logStore.dumpAll()
+                        showCopiedToast = true
+                    }
+                    .foregroundColor(.yellow)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Close") { dismiss() }
                         .foregroundColor(.white)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if showCopiedToast {
+                    Text("已复制 \(logStore.lines.count) 行到剪贴板")
+                        .padding(8)
+                        .background(Color.green.opacity(0.85))
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                        .padding(.bottom, 30)
+                        .transition(.opacity)
                 }
             }
         }
