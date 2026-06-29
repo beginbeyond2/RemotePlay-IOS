@@ -293,22 +293,12 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
-        // v2.3.46 修复：用户让我"看 Android 项目源码"。读完 Android MainActivity.java 后发现：
-        // Android 用 MediaCodec.configure(format, surface, null, 0) 是 SURFACE MODE，
-        // decoder 内部直接渲染到 Surface。iOS 没有 surface mode。
-        // iOS 26 hardware decoder 对 800x600 Baseline H.264 拒绝 → -12909。
-        // v2.3.46: 强制 SOFTWARE DECODER (iOS 17+ API: EnableHardwareAcceleratedVideoDecoder:false)。
-        // 同时换用 iOS 17+ 的 async callback API (VTDecompressionSessionDecodeFrameWithOutputHandler)，
-        // 避免 frameRefcon race condition 和 sync callback 的延迟问题。
-        let decoderSpec: CFDictionary?
-        if #available(iOS 17.0, *) {
-            let spec: [String: Any] = [
-                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: false
-            ]
-            decoderSpec = spec as CFDictionary
-        } else {
-            decoderSpec = nil
-        }
+        // v2.3.47 修复：v2.3.46 iOS 17+ API 报错。
+        // 用 string key "EnableHardwareAcceleratedVideoDecoder" 替代 SDK symbol，
+        // 避免 deployment target 检查失败。
+        let decoderSpec: CFDictionary = [
+            "EnableHardwareAcceleratedVideoDecoder" as String: false
+        ] as CFDictionary
 
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
@@ -385,12 +375,16 @@ final class H264Decoder {
             decodeTimeStamp: dts
         )
         var sampleBuffer: CMSampleBuffer?
-        // v2.3.29 修复：v2.3.28 用 CMSampleBufferCreate + MakeDataReady 编译失败
-        // （缺 dataReady, makeDataReadyCallback, refcon 三个参数）。
-        // 改回 CMSampleBufferCreateReady（v2.3.7~v2.3.27 已用，编译过，自动 mark data ready）。
-        let buildStatus = CMSampleBufferCreateReady(
+        // v2.3.47 修复：v2.3.46 CMSampleBufferCreateReady 报"missing arguments for
+        // dataReady, makeDataReadyCallback, refcon"——说明 iOS 17 SDK 中
+        // CMSampleBufferCreateReady 被 deprecate，重命名到 CMSampleBufferCreate。
+        // 改用 CMSampleBufferCreate 完整 13 参数 + 显式 CMSampleBufferMakeDataReady。
+        let buildStatus = CMSampleBufferCreate(
             allocator: kCFAllocatorDefault,
             dataBuffer: bb,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
             formatDescription: format,
             sampleCount: 1,
             sampleTimingEntryCount: 1,
@@ -399,6 +393,10 @@ final class H264Decoder {
             sampleSizeArray: &sampleSize,
             sampleBufferOut: &sampleBuffer
         )
+        if buildStatus == noErr, let sb = sampleBuffer {
+            // 显式 mark data ready（Apple 推荐方式，避免 iOS 17 deprecate CMSampleBufferCreateReady）
+            CMSampleBufferMakeDataReady(sb)
+        }
         guard buildStatus == noErr, let sb = sampleBuffer else {
             writeLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus) pts=\(frameIndex)/90000")
             return
