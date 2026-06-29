@@ -364,14 +364,16 @@ final class H264Decoder {
 
         frameIndex &+= 1
 
-        // v2.3.31 修复：v2.3.30 用 kCMTimeIndefinite 可能触发 -12909。
-        // 改回 v2.3.27 的 valid CMTime(value:3600, timescale:90000)。
+        // v2.3.32 最后尝试：iOS 26 -12909 可能是 duration 与 video frame rate
+        // 不匹配导致。用 CMTime(value: 0, timescale: 1)（zero duration）让 iOS
+        // 自动从 video 推断 frame rate。
+        // 同时把 PTS timescale 改回 25（避免 90000 的 iOS 26 潜在 bug）。
         let ptsValue = CMTimeValue(frameIndex)
-        let pts = CMTime(value: ptsValue * 3600, timescale: 90000)
+        let pts = CMTime(value: ptsValue, timescale: 25)
         let dts = pts
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
-            duration: CMTime(value: 3600, timescale: 90000),
+            duration: CMTime(value: 0, timescale: 1),  // zero = iOS auto-infer
             presentationTimeStamp: pts,
             decodeTimeStamp: dts
         )
