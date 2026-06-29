@@ -290,14 +290,23 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
-        // v2.3.30 修复：iOS 26 默认 software decoder 对 Baseline H.264 触发 -12909。
-        // 必须强制 hardware decoder。用 iOS 16 兼容的 VTSessionSetProperty
-        // （不是 iOS 17+ 的 decoderSpecification）。
+        // v2.3.31 修复：v2.3.30 用 VTSessionSetProperty(UsingHardwareAcceleratedVideoDecoder)
+        // 在 iOS 17+ SDK 中编译失败。改用 if #available 包裹 iOS 17+ 的 decoderSpecification。
+        let decoderSpec: CFDictionary?
+        if #available(iOS 17.0, *) {
+            let spec: [String: Any] = [
+                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
+            ]
+            decoderSpec = spec as CFDictionary
+        } else {
+            decoderSpec = nil
+        }
+
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
-            decoderSpecification: nil,
+            decoderSpecification: decoderSpec,
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
             outputCallback: &callbackRecord,
             decompressionSessionOut: &session
@@ -306,9 +315,7 @@ final class H264Decoder {
             writeLog("H264Decoder: VTDecompressionSessionCreate failed: \(status)")
             return false
         }
-        // v2.3.30 修复：iOS 16 兼容的 hardware decoder 强制
         VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-        VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder, value: kCFBooleanTrue)
         // v2.3.25 修复：CFNumberCreate 第 3 参数是 UnsafeRawPointer?，传 &intValue
         var threadCount: Int32 = 1
         if let cfThreadCount = CFNumberCreate(kCFAllocatorDefault, .intType, &threadCount) {
@@ -316,7 +323,8 @@ final class H264Decoder {
         }
 
         self.decompressionSession = s
-        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1, hardware=FORCED)")
+        let hwMode = decoderSpec == nil ? "default" : "hardware-forced"
+        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1, hw=\(hwMode))")
         return true
     }
 
@@ -356,15 +364,14 @@ final class H264Decoder {
 
         frameIndex &+= 1
 
-        // v2.3.30 修复：iOS 26 用 kCMTimeIndefinite 让 display layer 自动同步
-        // 帧率。CMTime(value:3600, timescale:90000) 在 iOS 26 触发 -12909。
-        // 用 kCMTimeIndefinite 让 iOS 自动推断 video frame rate。
+        // v2.3.31 修复：v2.3.30 用 kCMTimeIndefinite 可能触发 -12909。
+        // 改回 v2.3.27 的 valid CMTime(value:3600, timescale:90000)。
         let ptsValue = CMTimeValue(frameIndex)
-        let pts = CMTime(value: ptsValue, timescale: 25)  // 改回 timescale 25（避免 90000 触发 iOS 26 bug）
+        let pts = CMTime(value: ptsValue * 3600, timescale: 90000)
         let dts = pts
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
-            duration: kCMTimeIndefinite,  // v2.3.30：iOS 26 期望这个
+            duration: CMTime(value: 3600, timescale: 90000),
             presentationTimeStamp: pts,
             decodeTimeStamp: dts
         )
