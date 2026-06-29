@@ -179,8 +179,14 @@ final class H264Decoder {
             if scLen > 0 {
                 if naluStart >= 0 && naluStart < i {
                     let nalu = Array(bytes[naluStart..<i])
-                    if let type = nalu.first {
-                        nalus.append((type: type, body: nalu))
+                    if let first = nalu.first {
+                        // H.264 NALU header byte structure: F(1) + NRI(2) + Type(5)
+                        // First byte 0x67 means SPS: 0x67 & 0x1F = 0x07
+                        // First byte 0x68 means PPS: 0x68 & 0x1F = 0x08
+                        // First byte 0x65 means IDR: 0x65 & 0x1F = 0x05
+                        // Must mask with 0x1F to extract Type bits (low 5 bits).
+                        let naluType = first & 0x1F
+                        nalus.append((type: naluType, body: nalu))
                     }
                 }
                 naluStart = i + scLen
@@ -191,8 +197,9 @@ final class H264Decoder {
         }
         if naluStart >= 0 && naluStart < bytes.count {
             let nalu = Array(bytes[naluStart..<bytes.count])
-            if let type = nalu.first {
-                nalus.append((type: type, body: nalu))
+            if let first = nalu.first {
+                let naluType = first & 0x1F
+                nalus.append((type: naluType, body: nalu))
             }
         }
 
