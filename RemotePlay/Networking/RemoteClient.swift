@@ -100,8 +100,18 @@ final class RemoteClient {
 
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            // v2.3.36：每个 state 变化都打 log，远程诊断连接状态
-            self?.writeLog("RemoteClient state: \(state)")
+            // v2.3.37：用 switch 显式处理每个 state，避免 \(state) 字符串插值编译失败
+            let stateStr: String
+            switch state {
+            case .setup: stateStr = "setup"
+            case .waiting(let err): stateStr = "waiting(\(err.localizedDescription))"
+            case .preparing: stateStr = "preparing"
+            case .ready: stateStr = "ready"
+            case .failed(let err): stateStr = "failed(\(err.localizedDescription))"
+            case .cancelled: stateStr = "cancelled"
+            @unknown default: stateStr = "unknown"
+            }
+            self.writeLog("RemoteClient state: \(stateStr)")
             switch state {
             case .ready:
                 self.stateHandler?(.connected)
