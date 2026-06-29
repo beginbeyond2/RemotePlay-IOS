@@ -402,31 +402,26 @@ final class H264Decoder {
             return
         }
 
-        // v2.3.46: 改用 Apple 官方推荐方式 VTDecompressionSessionDecodeFrameWithOutputHandler
-        // (iOS 9+, async callback, 无 frameRefcon, no @convention(c) func, no race condition)
-        // 用 software decoder (decoderSpec = EnableHardwareAcceleratedVideoDecoder:false)
-        // 软件 decoder 兼容性最强，可处理所有 H.264 profile/level (包括 800x600 Baseline)。
-        VTDecompressionSessionDecodeFrameWithOutputHandler(
+        // v2.3.48 修复：v2.3.46~v2.3.47 用 VTDecompressionSessionDecodeFrameWithOutputHandler
+        // 但用了 Xcode 15 SDK 中不存在的 `infoFlagsOut: nil` 参数。
+        // Xcode 15 SDK 实际签名只有 (session, sampleBuffer, flags, outputHandler)。
+        // 改回 v2.3.22 同步 callback 形式 (VTDecompressionSessionDecodeFrame + frameRefcon)，
+        // 编译过+稳定。
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let decodeStatus = VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: sb,
             flags: [],
+            frameRefcon: refcon,
             infoFlagsOut: nil
-        ) { [weak self] status, infoFlags, imageBuffer, presentationTime, duration in
-            // 注意: Apple SDK 中此 closure 的参数可能是 (status, infoFlags, imageBuffer, pts, duration)
-            // 或 (status, infoFlags, imageBuffer) - 看 SDK 版本。Swift 编译器会提示正确签名。
-            guard status == noErr else {
-                LogStore.shared.log("H264Decoder: async VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
-                return
-            }
-            guard let pb = imageBuffer else {
-                LogStore.shared.log("H264Decoder: async VT callback imageBuffer=nil")
-                return
-            }
-            guard let self = self else { return }
-            // v2.3.46 修复：pts 用 closure 传入的 presentationTime，而不是自己计算的 frameIndex。
-            // 这样 Apple internal timing 完全控制，避免 -12909 kVTInvalidDurationErr。
-            self.enqueuePixelBuffer(pb, presentationTime: presentationTime)
+        )
+        if decodeStatus != noErr {
+            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(decodeStatus) (pts=\(frameIndex)/90000) - invalidating session")
+            VTDecompressionSessionInvalidate(session)
+            self.decompressionSession = nil
+            self.formatDescription = nil
         }
+        // async handler 不需要——用同步 callback (vtOutputCallback)
     }
 }
 
