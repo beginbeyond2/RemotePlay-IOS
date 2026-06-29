@@ -158,13 +158,18 @@ struct LogSheetView: View {
                     Button("Clear") { logStore.clear() }
                         .foregroundColor(.white)
                 }
-                // v2.3.33：加 Copy 按钮，把所有日志复制到剪贴板
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Copy") {
+                // v2.3.34：把 Copy 按钮放 principal 位置（中间标题区），一定可见
+                ToolbarItem(placement: .principal) {
+                    Button("📋 COPY LOG") {
                         UIPasteboard.general.string = logStore.dumpAll()
                         showCopiedToast = true
                     }
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.yellow)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.3))
+                    .cornerRadius(8)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Close") { dismiss() }
