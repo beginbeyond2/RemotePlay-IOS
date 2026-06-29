@@ -123,6 +123,8 @@ struct ContentView: View {
 }
 
 /// v2.3.18: 日志显示弹窗
+/// v2.3.35: 重写为 VStack，不依赖 navigationBar toolbar（iOS 26 toolbar 不可靠），
+/// 让 Copy 按钮绝对可见。
 struct LogSheetView: View {
     @EnvironmentObject private var logStore: LogStore
     @Environment(\.dismiss) private var dismiss
@@ -130,52 +132,69 @@ struct LogSheetView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(logStore.lines.enumerated()), id: \.offset) { (idx, line) in
-                            Text(line)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(colorFor(line))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .id(idx)
+            VStack(spacing: 0) {
+                // 顶部按钮栏（v2.3.35：不依赖 toolbar）
+                HStack(spacing: 12) {
+                    Button("Clear") { logStore.clear() }
+                        .foregroundColor(.white)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(Color.gray.opacity(0.3))
+                        .cornerRadius(6)
+
+                    // v2.3.35：大 Copy 按钮（黄色加粗 + 蓝底 + 📋 emoji）
+                    Button(action: {
+                        UIPasteboard.general.string = logStore.dumpAll()
+                        showCopiedToast = true
+                    }) {
+                        HStack {
+                            Image(systemName: "doc.on.doc.fill")
+                            Text("COPY LOG (\(logStore.lines.count) 行)")
+                                .fontWeight(.bold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .foregroundColor(.yellow)
+                        .background(Color.blue.opacity(0.6))
+                        .cornerRadius(8)
+                    }
+
+                    Button("Close") { dismiss() }
+                        .foregroundColor(.white)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(Color.gray.opacity(0.3))
+                        .cornerRadius(6)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color.black)
+
+                // 日志滚动区
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(logStore.lines.enumerated()), id: \.offset) { (idx, line) in
+                                Text(line)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(colorFor(line))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .id(idx)
+                            }
+                        }
+                    }
+                    .background(Color.black)
+                    .onChangeCompat(of: logStore.lines.count) { _ in
+                        if let last = logStore.lines.indices.last {
+                            withAnimation { proxy.scrollTo(last, anchor: .bottom) }
                         }
                     }
                 }
-                .background(Color.black)
-                .onChangeCompat(of: logStore.lines.count) { _ in
-                    if let last = logStore.lines.indices.last {
-                        withAnimation { proxy.scrollTo(last, anchor: .bottom) }
-                    }
-                }
             }
-            .navigationTitle("DEBUG LOG (\(logStore.lines.count))")
+            .navigationTitle("DEBUG LOG (v2.3.35 · \(logStore.lines.count))")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Clear") { logStore.clear() }
-                        .foregroundColor(.white)
-                }
-                // v2.3.34：把 Copy 按钮放 principal 位置（中间标题区），一定可见
-                ToolbarItem(placement: .principal) {
-                    Button("📋 COPY LOG") {
-                        UIPasteboard.general.string = logStore.dumpAll()
-                        showCopiedToast = true
-                    }
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.yellow)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.blue.opacity(0.3))
-                    .cornerRadius(8)
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Close") { dismiss() }
-                        .foregroundColor(.white)
-                }
-            }
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
                     Text("已复制 \(logStore.lines.count) 行到剪贴板")
