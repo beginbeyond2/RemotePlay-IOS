@@ -290,11 +290,17 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
+        // v2.3.28 修复：iOS 26 强制要求 decoderSpecification 显式指定 hardware decoder，
+        // 否则用 software decoder 但某些 H.264 stream 触发 -12909 / -12903。
+        let decoderSpec: [String: Any] = [
+            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
+        ]
+
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
-            decoderSpecification: nil,
+            decoderSpecification: decoderSpec as CFDictionary,
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
             outputCallback: &callbackRecord,
             decompressionSessionOut: &session
@@ -311,7 +317,7 @@ final class H264Decoder {
         }
 
         self.decompressionSession = s
-        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1)")
+        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1, hardware=YES)")
         return true
     }
 
@@ -365,7 +371,9 @@ final class H264Decoder {
             decodeTimeStamp: dts
         )
         var sampleBuffer: CMSampleBuffer?
-        let buildStatus = CMSampleBufferCreateReady(
+        // v2.3.28 修复：改用 CMSampleBufferCreate + MakeDataReady，
+        // 避免 CMSampleBufferCreateReady 在 iOS 26 的特殊行为。
+        let buildStatus = CMSampleBufferCreate(
             allocator: kCFAllocatorDefault,
             dataBuffer: bb,
             formatDescription: format,
@@ -376,10 +384,11 @@ final class H264Decoder {
             sampleSizeArray: &sampleSize,
             sampleBufferOut: &sampleBuffer
         )
-        guard buildStatus == noErr, let sb = sampleBuffer else {
-            writeLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus) pts=\(frameIndex)/90000")
+        guard buildStatus == noErr, var sb = sampleBuffer else {
+            writeLog("H264Decoder: CMSampleBufferCreate failed: \(buildStatus) pts=\(frameIndex)/90000")
             return
         }
+        CMSampleBufferMakeDataReady(sb)
 
         // v2.3.26 改回 v2.3.22 同步 callback 形式（编译过），
         // 同时保留 timescale 90000 + 修 DTS valid（解决 -12909）。
