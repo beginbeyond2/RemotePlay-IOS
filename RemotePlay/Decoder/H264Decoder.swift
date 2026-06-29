@@ -218,7 +218,7 @@ final class H264Decoder {
 
         // 如有 SPS+PPS 且 session 还没建 → 建
         if let sps = spsData, let pps = ppsData, formatDescription == nil {
-            writeLog("H264Decoder: have SPS(\(sps.count) bytes) + PPS(\(pps.count) bytes), creating session...")
+            writeLog("H264Decoder: have SPS(\(sps.count) bytes, first=\(sps.prefix(8).map { String(format: "%02x", $0) }.joined())) + PPS(\(pps.count) bytes, first=\(pps.prefix(4).map { String(format: "%02x", $0) }.joined())), creating session...")
             makeFormatDescription(sps: Array(sps), pps: Array(pps))
         }
 
@@ -377,7 +377,12 @@ final class H264Decoder {
             infoFlagsOut: nil
         )
         if status != noErr {
-            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(status)")
+            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(status) (pts=\(frameIndex)/25) - invalidating session, will recreate on next SPS")
+            // v2.3.22 修复：decode 失败时强制 invalidate session，
+            // 下次 process 时若 spsData/ppsData 仍存在会重新建 session。
+            VTDecompressionSessionInvalidate(session)
+            self.decompressionSession = nil
+            self.formatDescription = nil
         }
     }
 }
