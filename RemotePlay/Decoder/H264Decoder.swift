@@ -377,23 +377,22 @@ final class H264Decoder {
             return
         }
 
-        // v2.3.25 改用 async closure API（iOS 9+，更稳定，不需 frameRefcon）
-        // 注意：Xcode 15 SDK 中此 API 是位置参数（不是 labeled）
-        let capturedPts = frameIndex
-        VTDecompressionSessionDecodeFrameWithOutputHandler(
+        // v2.3.26 改回 v2.3.22 同步 callback 形式（编译过），
+        // 同时保留 timescale 90000 + 修 DTS valid（解决 -12909）。
+        // 不能再用 async closure API（名字错）。
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let decodeStatus = VTDecompressionSessionDecodeFrame(
             session,
-            sb,
-            [],
-            nil
-        ) { [weak self] status, infoFlags, imageBuffer, outPTS, duration in
-            if status != noErr {
-                LogStore.shared.log("H264Decoder: async decode status=\(status) pts=\(capturedPts) infoFlags=\(infoFlags.rawValue)")
-                return
-            }
-            guard let ib = imageBuffer else { return }
-            DispatchQueue.main.async {
-                self?.enqueuePixelBuffer(ib, presentationTime: outPTS)
-            }
+            sampleBuffer: sb,
+            flags: [],
+            frameRefcon: refcon,
+            infoFlagsOut: nil
+        )
+        if decodeStatus != noErr {
+            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(decodeStatus) (pts=\(frameIndex)/90000) - invalidating session")
+            VTDecompressionSessionInvalidate(session)
+            self.decompressionSession = nil
+            self.formatDescription = nil
         }
     }
 }
