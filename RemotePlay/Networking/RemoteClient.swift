@@ -100,6 +100,8 @@ final class RemoteClient {
 
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
+            // v2.3.36：每个 state 变化都打 log，远程诊断连接状态
+            self?.writeLog("RemoteClient state: \(state)")
             switch state {
             case .ready:
                 self.stateHandler?(.connected)
@@ -116,6 +118,7 @@ final class RemoteClient {
             }
         }
 
+        writeLog("RemoteClient start: connecting to \(host):\(port)")
         stateHandler?(.connecting)
         conn.start(queue: queue)
     }
@@ -157,18 +160,22 @@ final class RemoteClient {
 
     private func startReceiving() {
         guard let conn = connection else { return }
+        writeLog("RemoteClient startReceiving: max=64K")
         conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             if let data, !data.isEmpty {
+                self.writeLog("RemoteClient received: \(data.count) bytes (buffer=\(self.receiveBuffer.count + data.count))")
                 self.receiveBuffer.append(data)
                 self.drainFrames()
             }
             if let error {
+                self.writeLog("RemoteClient receive error: \(error.localizedDescription)")
                 self.stateHandler?(.failed(error.localizedDescription))
                 self.cancel()
                 return
             }
             if isComplete {
+                self.writeLog("RemoteClient receive: isComplete")
                 self.cancel()
                 return
             }
