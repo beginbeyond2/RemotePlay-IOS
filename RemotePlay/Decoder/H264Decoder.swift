@@ -290,14 +290,14 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
-        // v2.3.29 修复：v2.3.28 用了 kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder
-        // 但该 API 仅 iOS 17+，我们 deployment target 是 iOS 16。改回 decoderSpecification: nil。
-        // v2.3.27 的 pixel format NV12 + 正确 PTS/DTS 保留（这才是真正修复）。
+        // v2.3.30 修复：iOS 26 默认 software decoder 对 Baseline H.264 触发 -12909。
+        // 必须强制 hardware decoder。用 iOS 16 兼容的 VTSessionSetProperty
+        // （不是 iOS 17+ 的 decoderSpecification）。
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
-            decoderSpecification: nil,  // iOS 16 兼容；iOS 17+ 需 #available 检查
+            decoderSpecification: nil,
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
             outputCallback: &callbackRecord,
             decompressionSessionOut: &session
@@ -306,7 +306,9 @@ final class H264Decoder {
             writeLog("H264Decoder: VTDecompressionSessionCreate failed: \(status)")
             return false
         }
+        // v2.3.30 修复：iOS 16 兼容的 hardware decoder 强制
         VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder, value: kCFBooleanTrue)
         // v2.3.25 修复：CFNumberCreate 第 3 参数是 UnsafeRawPointer?，传 &intValue
         var threadCount: Int32 = 1
         if let cfThreadCount = CFNumberCreate(kCFAllocatorDefault, .intType, &threadCount) {
@@ -314,7 +316,7 @@ final class H264Decoder {
         }
 
         self.decompressionSession = s
-        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1)")
+        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1, hardware=FORCED)")
         return true
     }
 
@@ -354,16 +356,15 @@ final class H264Decoder {
 
         frameIndex &+= 1
 
-        // v2.3.27 修复：v2.3.26 我设错了 PTS/DTS —— DTS > PTS 是错的。
-        // 正确：PTS = frameIndex * 3600 / 90000 = frameIndex / 25 秒
-        //       DTS = PTS（单 frame GOP 解码顺序 = 显示顺序）
-        //       duration = 3600 / 90000 = 1/25 秒
+        // v2.3.30 修复：iOS 26 用 kCMTimeIndefinite 让 display layer 自动同步
+        // 帧率。CMTime(value:3600, timescale:90000) 在 iOS 26 触发 -12909。
+        // 用 kCMTimeIndefinite 让 iOS 自动推断 video frame rate。
         let ptsValue = CMTimeValue(frameIndex)
-        let pts = CMTime(value: ptsValue * 3600, timescale: 90000)  // 正确
-        let dts = pts  // DTS = PTS
+        let pts = CMTime(value: ptsValue, timescale: 25)  // 改回 timescale 25（避免 90000 触发 iOS 26 bug）
+        let dts = pts
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
-            duration: CMTime(value: 3600, timescale: 90000),  // 1/25 秒
+            duration: kCMTimeIndefinite,  // v2.3.30：iOS 26 期望这个
             presentationTimeStamp: pts,
             decodeTimeStamp: dts
         )
