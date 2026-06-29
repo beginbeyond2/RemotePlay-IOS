@@ -290,17 +290,14 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
-        // v2.3.28 修复：iOS 26 强制要求 decoderSpecification 显式指定 hardware decoder，
-        // 否则用 software decoder 但某些 H.264 stream 触发 -12909 / -12903。
-        let decoderSpec: [String: Any] = [
-            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
-        ]
-
+        // v2.3.29 修复：v2.3.28 用了 kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder
+        // 但该 API 仅 iOS 17+，我们 deployment target 是 iOS 16。改回 decoderSpecification: nil。
+        // v2.3.27 的 pixel format NV12 + 正确 PTS/DTS 保留（这才是真正修复）。
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
-            decoderSpecification: decoderSpec as CFDictionary,
+            decoderSpecification: nil,  // iOS 16 兼容；iOS 17+ 需 #available 检查
             imageBufferAttributes: pixelBufferAttrs as CFDictionary,
             outputCallback: &callbackRecord,
             decompressionSessionOut: &session
@@ -317,7 +314,7 @@ final class H264Decoder {
         }
 
         self.decompressionSession = s
-        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1, hardware=YES)")
+        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1)")
         return true
     }
 
@@ -371,9 +368,10 @@ final class H264Decoder {
             decodeTimeStamp: dts
         )
         var sampleBuffer: CMSampleBuffer?
-        // v2.3.28 修复：改用 CMSampleBufferCreate + MakeDataReady，
-        // 避免 CMSampleBufferCreateReady 在 iOS 26 的特殊行为。
-        let buildStatus = CMSampleBufferCreate(
+        // v2.3.29 修复：v2.3.28 用 CMSampleBufferCreate + MakeDataReady 编译失败
+        // （缺 dataReady, makeDataReadyCallback, refcon 三个参数）。
+        // 改回 CMSampleBufferCreateReady（v2.3.7~v2.3.27 已用，编译过，自动 mark data ready）。
+        let buildStatus = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
             dataBuffer: bb,
             formatDescription: format,
@@ -384,11 +382,10 @@ final class H264Decoder {
             sampleSizeArray: &sampleSize,
             sampleBufferOut: &sampleBuffer
         )
-        guard buildStatus == noErr, var sb = sampleBuffer else {
-            writeLog("H264Decoder: CMSampleBufferCreate failed: \(buildStatus) pts=\(frameIndex)/90000")
+        guard buildStatus == noErr, let sb = sampleBuffer else {
+            writeLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus) pts=\(frameIndex)/90000")
             return
         }
-        CMSampleBufferMakeDataReady(sb)
 
         // v2.3.26 改回 v2.3.22 同步 callback 形式（编译过），
         // 同时保留 timescale 90000 + 修 DTS valid（解决 -12909）。
