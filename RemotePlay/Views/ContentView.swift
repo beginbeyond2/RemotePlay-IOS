@@ -158,7 +158,7 @@ struct LogSheetView: View {
                     }) {
                         HStack {
                             Image(systemName: "doc.on.doc.fill")
-                            Text("COPY + SAVE (\(logStore.lines.count) 行)")
+                            Text("COPY (\(logStore.lines.count) 行)")
                                 .fontWeight(.bold)
                         }
                         .frame(maxWidth: .infinity)
@@ -168,41 +168,26 @@ struct LogSheetView: View {
                         .cornerRadius(8)
                     }
 
-                    // v2.3.41：加 Share 按钮（用 UIActivityViewController 弹原生分享菜单）
-                    Button(action: {
-                        let allText = logStore.dumpAll()
-                        // 先写文件到 Documents
-                        if let url = LogStore.shared.getFileURL() {
-                            try? allText.data(using: .utf8)?.write(to: url, options: .atomic)
-                            // 弹原生分享菜单（含微信/邮件/Files/Notes）
-                            let activityVC = UIActivityViewController(
-                                activityItems: [url],
-                                applicationActivities: nil
-                            )
-                            // iPad 需要 popover 来源
-                            if let popover = activityVC.popoverPresentationController {
-                                popover.sourceView = UIApplication.shared.windows.first
-                                popover.sourceRect = CGRect(
-                                    x: UIScreen.main.bounds.midX,
-                                    y: UIScreen.main.bounds.midY,
-                                    width: 0, height: 0
-                                )
-                                popover.permittedArrowDirections = []
+                    // v2.3.42：用 SwiftUI ShareLink 替代 UIActivityViewController
+                    // SwiftUI ShareLink 是 iOS 16+ 原生组件，在 .sheet 内能正确弹分享菜单
+                    if let url = LogStore.shared.getFileURL() {
+                        ShareLink(item: url) {
+                            HStack {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("SHARE FILE")
+                                    .fontWeight(.bold)
                             }
-                            UIApplication.shared.windows.first?.rootViewController?
-                                .present(activityVC, animated: true)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .foregroundColor(.white)
+                            .background(Color.green.opacity(0.7))
+                            .cornerRadius(8)
                         }
-                    }) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("SHARE FILE")
-                                .fontWeight(.bold)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .foregroundColor(.white)
-                        .background(Color.green.opacity(0.7))
-                        .cornerRadius(8)
+                        // 点击时强制写一次文件，保证最新
+                        .simultaneousGesture(TapGesture().onEnded {
+                            let allText = logStore.dumpAll()
+                            try? allText.data(using: .utf8)?.write(to: url, options: .atomic)
+                        })
                     }
 
                     Button("Close") { dismiss() }
@@ -239,7 +224,7 @@ struct LogSheetView: View {
                     }
                 }
             }
-            .navigationTitle("DEBUG LOG (v2.3.41 · \(logStore.lines.count))")
+            .navigationTitle("DEBUG LOG (v2.3.42 · \(logStore.lines.count))")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
