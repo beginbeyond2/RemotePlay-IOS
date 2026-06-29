@@ -143,13 +143,22 @@ struct LogSheetView: View {
                         .cornerRadius(6)
 
                     // v2.3.35：大 Copy 按钮（黄色加粗 + 蓝底 + 📋 emoji）
+                    // v2.3.40 修复：用 setItems 替代直接赋值 .string（iOS 26 更可靠）
                     Button(action: {
-                        UIPasteboard.general.string = logStore.dumpAll()
+                        let allText = logStore.dumpAll()
+                        // 1) 写文件到 Documents/RemotePlay-log.txt（已有，3uTools 可导出）
+                        if let url = LogStore.shared.getFileURL() {
+                            try? allText.data(using: .utf8)?.write(to: url, options: .atomic)
+                        }
+                        // 2) 用 setItems 复制到剪贴板（iOS 26 兼容）
+                        UIPasteboard.general.setItems([
+                            [UIPasteboard.typeAutomatic: allText]
+                        ])
                         showCopiedToast = true
                     }) {
                         HStack {
                             Image(systemName: "doc.on.doc.fill")
-                            Text("COPY LOG (\(logStore.lines.count) 行)")
+                            Text("COPY + SAVE (\(logStore.lines.count) 行)")
                                 .fontWeight(.bold)
                         }
                         .frame(maxWidth: .infinity)
@@ -193,11 +202,11 @@ struct LogSheetView: View {
                     }
                 }
             }
-            .navigationTitle("DEBUG LOG (v2.3.39 · \(logStore.lines.count))")
+            .navigationTitle("DEBUG LOG (v2.3.40 · \(logStore.lines.count))")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
-                    Text("已复制 \(logStore.lines.count) 行到剪贴板")
+                    Text("已复制 \(logStore.lines.count) 行到剪贴板 + 写入 Documents/RemotePlay-log.txt")
                         .padding(8)
                         .background(Color.green.opacity(0.85))
                         .foregroundColor(.white)
