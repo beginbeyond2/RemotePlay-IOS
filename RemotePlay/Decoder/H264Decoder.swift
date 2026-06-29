@@ -347,7 +347,9 @@ final class H264Decoder {
         var sampleTiming = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 25),
             presentationTimeStamp: CMTime(value: CMTimeValue(frameIndex), timescale: 25),
-            decodeTimeStamp: .invalid
+            // v2.3.23 修复：不能传 .invalid —— Apple VideoToolbox 返回 -12909 (kVTInvalidDurationErr)。
+            // 必须传一个 valid DTS。最简单：DTS = PTS (解码顺序 = 显示顺序)。
+            decodeTimeStamp: CMTime(value: CMTimeValue(frameIndex), timescale: 25)
         )
         let buildStatus = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
