@@ -51,8 +51,11 @@ final class H264Decoder {
     private var frameIndex: UInt64 = 0
     private var displayedFrameCount: UInt64 = 0
     private var droppedFrameCount: UInt64 = 0
+    // v2.3.27 修复：iOS 26 hardware H.264 decoder 只支持 YUV (NV12) pixel format，
+    // 不支持 32BGRA。BGRA 会在 iOS 26 触发 -12909 kVTInvalidDurationErr 或类似错误。
+    // 必须用 420YpCbCr8BiPlanarVideoRange (NV12)，AVSampleBufferDisplayLayer 能直接显示。
     private let pixelBufferAttrs: [String: Any] = [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
         kCVPixelBufferIOSurfacePropertiesKey as String: [:]
     ]
 
@@ -348,12 +351,13 @@ final class H264Decoder {
 
         frameIndex &+= 1
 
-        // v2.3.24 修复：iOS 26 对 duration 字段更严格。
-        // 不能再用 kCMTimeInvalid / 短 duration —— 改用 ISO BMFF 标准 1/90000 timescale。
+        // v2.3.27 修复：v2.3.26 我设错了 PTS/DTS —— DTS > PTS 是错的。
+        // 正确：PTS = frameIndex * 3600 / 90000 = frameIndex / 25 秒
+        //       DTS = PTS（单 frame GOP 解码顺序 = 显示顺序）
+        //       duration = 3600 / 90000 = 1/25 秒
         let ptsValue = CMTimeValue(frameIndex)
-        let pts = CMTime(value: ptsValue, timescale: 90000)
-        // DTS 必须严格 < PTS。PTS = (frameIndex * 3600) 表示一帧 1/25 秒
-        let dts = CMTime(value: ptsValue * 3600, timescale: 90000)
+        let pts = CMTime(value: ptsValue * 3600, timescale: 90000)  // 正确
+        let dts = pts  // DTS = PTS
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
             duration: CMTime(value: 3600, timescale: 90000),  // 1/25 秒
