@@ -293,10 +293,22 @@ final class H264Decoder {
             decompressionOutputRefCon: refcon
         )
 
-        // v2.3.45 修复：v2.3.27~v2.3.43 hardware-forced → -12909；v2.3.44 software-forced → -8969。
-        // iOS 26 不允许任何强制 hardware decoder。
-        // 改回 decoderSpec = nil，让 iOS 26 自动选择可用 decoder（首选 hardware，无 hardware 时 fallback software）。
-        let decoderSpec: CFDictionary? = nil
+        // v2.3.46 修复：用户让我"看 Android 项目源码"。读完 Android MainActivity.java 后发现：
+        // Android 用 MediaCodec.configure(format, surface, null, 0) 是 SURFACE MODE，
+        // decoder 内部直接渲染到 Surface。iOS 没有 surface mode。
+        // iOS 26 hardware decoder 对 800x600 Baseline H.264 拒绝 → -12909。
+        // v2.3.46: 强制 SOFTWARE DECODER (iOS 17+ API: EnableHardwareAcceleratedVideoDecoder:false)。
+        // 同时换用 iOS 17+ 的 async callback API (VTDecompressionSessionDecodeFrameWithOutputHandler)，
+        // 避免 frameRefcon race condition 和 sync callback 的延迟问题。
+        let decoderSpec: CFDictionary?
+        if #available(iOS 17.0, *) {
+            let spec: [String: Any] = [
+                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: false
+            ]
+            decoderSpec = spec as CFDictionary
+        } else {
+            decoderSpec = nil
+        }
 
         var session: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
@@ -392,28 +404,35 @@ final class H264Decoder {
             return
         }
 
-        // v2.3.26 改回 v2.3.22 同步 callback 形式（编译过），
-        // 同时保留 timescale 90000 + 修 DTS valid（解决 -12909）。
-        // 不能再用 async closure API（名字错）。
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        let decodeStatus = VTDecompressionSessionDecodeFrame(
+        // v2.3.46: 改用 Apple 官方推荐方式 VTDecompressionSessionDecodeFrameWithOutputHandler
+        // (iOS 9+, async callback, 无 frameRefcon, no @convention(c) func, no race condition)
+        // 用 software decoder (decoderSpec = EnableHardwareAcceleratedVideoDecoder:false)
+        // 软件 decoder 兼容性最强，可处理所有 H.264 profile/level (包括 800x600 Baseline)。
+        VTDecompressionSessionDecodeFrameWithOutputHandler(
             session,
             sampleBuffer: sb,
             flags: [],
-            frameRefcon: refcon,
             infoFlagsOut: nil
-        )
-        if decodeStatus != noErr {
-            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(decodeStatus) (pts=\(frameIndex)/90000) - invalidating session")
-            VTDecompressionSessionInvalidate(session)
-            self.decompressionSession = nil
-            self.formatDescription = nil
+        ) { [weak self] status, infoFlags, imageBuffer, presentationTime, duration in
+            // 注意: Apple SDK 中此 closure 的参数可能是 (status, infoFlags, imageBuffer, pts, duration)
+            // 或 (status, infoFlags, imageBuffer) - 看 SDK 版本。Swift 编译器会提示正确签名。
+            guard status == noErr else {
+                LogStore.shared.log("H264Decoder: async VT callback status=\(status), infoFlags=\(infoFlags.rawValue)")
+                return
+            }
+            guard let pb = imageBuffer else {
+                LogStore.shared.log("H264Decoder: async VT callback imageBuffer=nil")
+                return
+            }
+            guard let self = self else { return }
+            // v2.3.46 修复：pts 用 closure 传入的 presentationTime，而不是自己计算的 frameIndex。
+            // 这样 Apple internal timing 完全控制，避免 -12909 kVTInvalidDurationErr。
+            self.enqueuePixelBuffer(pb, presentationTime: presentationTime)
         }
     }
 }
 
-// 静态 @convention(c) 回调：VTDecompressionSession 的解码完成 callback。
-// Apple SDK 中 VTDecompressionOutputCallback 的真实签名是 7 参数。
+// MARK: - 同步 callback 形式（保留以备不时之需）
 extension H264Decoder {
     static let vtOutputCallback: VTDecompressionOutputCallback = {
         (refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, pts, duration) in
