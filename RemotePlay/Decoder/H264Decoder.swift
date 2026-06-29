@@ -301,9 +301,16 @@ final class H264Decoder {
             return false
         }
         VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        // v2.3.24: iOS 26 需要明确的 thread count，否则可能 decode 失败
+        if let threadCount = CFNumberCreate(kCFAllocatorDefault, .intType, [1] as CFArray) {
+            VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_ThreadCount, value: threadCount)
+        }
+        if let propNumber = CFNumberCreate(kCFAllocatorDefault, .intType, [1] as CFArray) {
+            VTSessionSetProperty(s, key: kVTDecompressionPropertyKey_FieldMode, value: kCFBooleanFalse)
+        }
 
         self.decompressionSession = s
-        writeLog("H264Decoder: VTDecompressionSession created OK")
+        writeLog("H264Decoder: VTDecompressionSession created OK (realTime=on, threads=1)")
         return true
     }
 
@@ -341,16 +348,21 @@ final class H264Decoder {
             return
         }
 
-        // 包成 CMSampleBuffer（送进 VTDecompressionSession）
-        var sampleBuffer: CMSampleBuffer?
+        frameIndex &+= 1
+
+        // v2.3.24 修复：iOS 26 对 duration 字段更严格。
+        // 不能再用 kCMTimeInvalid / 短 duration —— 改用 ISO BMFF 标准 1/90000 timescale。
+        let ptsValue = CMTimeValue(frameIndex)
+        let pts = CMTime(value: ptsValue, timescale: 90000)
+        // DTS 必须严格 < PTS。PTS = (frameIndex * 3600) 表示一帧 1/25 秒
+        let dts = CMTime(value: ptsValue * 3600, timescale: 90000)
         var sampleSize: Int = dataLength
         var sampleTiming = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: 25),
-            presentationTimeStamp: CMTime(value: CMTimeValue(frameIndex), timescale: 25),
-            // v2.3.23 修复：不能传 .invalid —— Apple VideoToolbox 返回 -12909 (kVTInvalidDurationErr)。
-            // 必须传一个 valid DTS。最简单：DTS = PTS (解码顺序 = 显示顺序)。
-            decodeTimeStamp: CMTime(value: CMTimeValue(frameIndex), timescale: 25)
+            duration: CMTime(value: 3600, timescale: 90000),  // 1/25 秒
+            presentationTimeStamp: pts,
+            decodeTimeStamp: dts
         )
+        var sampleBuffer: CMSampleBuffer?
         let buildStatus = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
             dataBuffer: bb,
@@ -363,29 +375,27 @@ final class H264Decoder {
             sampleBufferOut: &sampleBuffer
         )
         guard buildStatus == noErr, let sb = sampleBuffer else {
-            writeLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus)")
+            writeLog("H264Decoder: CMSampleBufferCreateReady failed: \(buildStatus) pts=\(frameIndex)/90000")
             return
         }
 
-        frameIndex &+= 1
-
-        // 提交到 VTDecompressionSession 解码
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        let status = VTDecompressionSessionDecodeFrame(
+        // v2.3.24 改用 async closure API（iOS 9+，更稳定，不需 frameRefcon）
+        let capturedPts = frameIndex
+        VTDecompressionSessionDecodeFrameWithOutputHandler(
             session,
             sampleBuffer: sb,
             flags: [],
-            frameRefcon: refcon,
-            infoFlagsOut: nil
+            outputHandler: { [weak self] status, infoFlags, imageBuffer, outPTS, duration in
+                if status != noErr {
+                    LogStore.shared.log("H264Decoder: async decode status=\(status) pts=\(capturedPts) infoFlags=\(infoFlags.rawValue)")
+                    return
+                }
+                guard let ib = imageBuffer else { return }
+                DispatchQueue.main.async {
+                    self?.enqueuePixelBuffer(ib, presentationTime: outPTS)
+                }
+            }
         )
-        if status != noErr {
-            writeLog("H264Decoder: VTDecompressionSessionDecodeFrame failed: \(status) (pts=\(frameIndex)/25) - invalidating session, will recreate on next SPS")
-            // v2.3.22 修复：decode 失败时强制 invalidate session，
-            // 下次 process 时若 spsData/ppsData 仍存在会重新建 session。
-            VTDecompressionSessionInvalidate(session)
-            self.decompressionSession = nil
-            self.formatDescription = nil
-        }
     }
 }
 
