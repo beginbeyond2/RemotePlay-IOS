@@ -224,7 +224,7 @@ struct LogSheetView: View {
                     }
                 }
             }
-            .navigationTitle("DEBUG LOG (v2.3.44 · \(logStore.lines.count))")
+            .navigationTitle("DEBUG LOG (v2.3.45 · \(logStore.lines.count))")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottom) {
                 if showCopiedToast {

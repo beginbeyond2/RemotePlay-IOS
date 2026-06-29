@@ -25,8 +25,8 @@ settings:
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: "Apple Development"
-    MARKETING_VERSION: "2.3.44"
-    CURRENT_PROJECT_VERSION: "44"
+    MARKETING_VERSION: "2.3.45"
+    CURRENT_PROJECT_VERSION: "45"
     PRODUCT_NAME: "RemotePlay"
 
 targets:
@@ -59,8 +59,8 @@ targets:
         UIStatusBarHidden: true
         UIViewControllerBasedStatusBarAppearance: false
         NSLocalNetworkUsageDescription: "RemotePlay connects to the oscilloscope on your local network (TCP 8888) to stream live measurement and receive touch / button commands."
-        CFBundleShortVersionString: "2.3.44"
-        CFBundleVersion: "44"
+        CFBundleShortVersionString: "2.3.45"
+        CFBundleVersion: "45"
         CFBundleDisplayName: "RemotePlay"
         LSRequiresIPhoneOS: true
     dependencies:
