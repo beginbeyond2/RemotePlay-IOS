@@ -51,14 +51,14 @@ final class H264Decoder {
     private var frameIndex: UInt64 = 0
     private var displayedFrameCount: UInt64 = 0
     private var droppedFrameCount: UInt64 = 0
-    // v2.3.45 修复：v2.3.44 software decoder 触发 -8969 (kVTPixelTransferNotSupportedErr)。
-    // 原因：iOS 26 software decoder 输出 NV12，但 AVSampleBufferDisplayLayer
-    // 不能直接显示 NV12。iOS 试图做 NV12→BGRA pixel transfer 但 software
-    // decoder 路径不支持。
-    // 修复：pixelBufferAttrs 改回 32BGRA，AVSampleBufferDisplayLayer
-    // 可直接显示 BGRA framebuffer，无 pixel transfer。
+    // v2.3.49 修复：v2.3.7~v2.3.26 用 BGRA 触发 -12909 (hardware decoder 拒);
+    // v2.3.27~v2.3.48 用 NV12 但 search 不存在 (v2.3.45 改回 BGRA 又触发 -8969).
+    // 真正的 fix：VTDecompressionSession 创建 NV12 pixel buffer pool +
+    // AVSampleBufferDisplayLayer 直接显示 NV12 (iOS 18+ 支持 NV12 显示, 0 pixel transfer).
+    // + decoderSpec 用 string key "EnableHardwareAcceleratedVideoDecoder" = false (software decoder).
+    // + CMSampleBufferCreateForImageBuffer + format 用 NV12 format description (自动匹配).
     private let pixelBufferAttrs: [String: Any] = [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
         kCVPixelBufferIOSurfacePropertiesKey as String: [:]
     ]
 
