@@ -3,7 +3,7 @@
 iOS 客户端 for Micsig 示波器远程控制。
 
 <!--BEGIN_BUILD_BADGE-->
-<sub>📦 Latest build: <b>vios-latest</b> · commit <code>a66dde9</code> · 2026-06-30 07:14 UTC · ✅ passing</sub>
+<sub>📦 Latest build: <b>vios-latest</b> · commit <code>c4a2b24</code> · 2026-07-01 01:44 UTC · ✅ passing</sub>
 <!--END_BUILD_BADGE-->
 
 ---
